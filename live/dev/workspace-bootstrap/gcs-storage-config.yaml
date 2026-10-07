@@ -1,0 +1,5 @@
+# GCS bucket for the Unity Catalog external location and the catalog's managed storage.
+# The GCP project ID is appended to keep the name globally unique (max 63 characters in total).
+bucket:
+  name_prefix: "dbx-architect-lab-dev-uc"
+  force_destroy: true

@@ -1,0 +1,39 @@
+workspace_name: "dbw-dbx-architect-lab-prod"
+# GCP region; must match the Unity Catalog metastore region (live/metastore/config.yaml).
+region: "us-central1"
+
+# GCP project for this environment's workspace, VPC and buckets. Defaults to gcp_project_id in
+# live/common.yaml; set it here to put this environment in its own project.
+# gcp_project_id: "dbx-architect-lab-prod"
+
+network:
+  vpc_name: "vpc-dbx-architect-lab-prod"
+  # Subnet for the cluster VMs (netmask /29 to /9). Each node uses one IP; a /24 fits ~250 nodes.
+  # Databricks on GCP needs a single regional subnet, no secondary ranges.
+  node_subnet_cidr: "10.2.0.0/22"
+  # Private Service Connect endpoint subnet (only used when private_service_connect.enabled).
+  psc_subnet_cidr: "10.2.4.0/28"
+  # Cloud Router + Cloud NAT for outbound internet access (PyPI, Maven, external APIs) and, without
+  # Private Service Connect, the path to the Databricks control plane.
+  nat_enabled: true
+
+# Back-end Private Service Connect: clusters reach the control plane through PSC endpoints. Requires the
+# Databricks Enterprise tier; it is off so the workspace works on Premium, with clusters using Cloud NAT.
+private_service_connect:
+  enabled: false
+  # Allow users to reach the workspace UI/API from the public internet.
+  public_access_enabled: true
+  # Regional service attachments; check them against
+  # https://docs.databricks.com/gcp/en/resources/ip-domain-region#psc
+  workspace_service_attachment: "projects/gcp-prod-general/regions/us-central1/serviceAttachments/plproxy-psc-endpoint-all-ports"
+  relay_service_attachment: "projects/prod-gcp-us-central1/regions/us-central1/serviceAttachments/ngrok-psc-endpoint"
+
+identity:
+  platform_admin_group_name: "DBX_Architect_Lab_Admin"
+
+# Applied as GCP labels (buckets, cluster VMs): lowercase keys and values, letters, digits, "_" and "-" only.
+labels:
+  environment: "prod"
+  application: "databricks"
+  compliance: "hipaa"
+  owner: "dbxarchitectlab"

@@ -1,0 +1,70 @@
+# Node types are GCP machine types (n2-standard-4: 4 vCPU / 16 GB, n2-standard-8: 8 vCPU / 32 GB).
+# gcp_attributes.availability: ON_DEMAND_GCP, PREEMPTIBLE_GCP or PREEMPTIBLE_WITH_FALLBACK_GCP.
+# gcp_attributes.zone_id: HA (Databricks picks a zone), AUTO, or a specific zone such as us-central1-a.
+clusters:
+  personal-dbx:
+    policy_name: Personal Compute
+    spark_version: 15.4.x-scala2.12
+    node_type_id: n2-standard-4
+    num_workers: 0
+    data_security_mode: SINGLE_USER
+    runtime_engine: STANDARD
+    autotermination_minutes: 240
+    single_user_name: dbxarchitectlab@gmail.com
+    spark_conf:
+      spark.databricks.cluster.profile: singleNode
+    gcp_attributes:
+      availability: ON_DEMAND_GCP
+      zone_id: HA
+    custom_tags:
+      workload: personal-dev
+      bootstrap: "true"
+
+  shared-analytics:
+    policy_name: Shared Compute
+    spark_version: 15.4.x-scala2.12
+    node_type_id: n2-standard-8
+    data_security_mode: USER_ISOLATION
+    autotermination_minutes: 120
+    autoscale:
+      min_workers: 2
+      max_workers: 10
+    gcp_attributes:
+      availability: PREEMPTIBLE_WITH_FALLBACK_GCP
+      first_on_demand: 1
+      zone_id: HA
+    custom_tags:
+      workload: shared-analytics
+      bootstrap: "true"
+
+  power-user-analytics:
+    policy_name: Power User Compute
+    spark_version: 15.4.x-scala2.12
+    node_type_id: n2-standard-4
+    data_security_mode: USER_ISOLATION
+    autotermination_minutes: 120
+    autoscale:
+      min_workers: 2
+      max_workers: 10
+    gcp_attributes:
+      availability: PREEMPTIBLE_WITH_FALLBACK_GCP
+      first_on_demand: 1
+      zone_id: HA
+    custom_tags:
+      workload: power-user
+      bootstrap: "true"
+
+  shared-analytics-custom:
+    policy_name: shared_compute_customize
+    node_type_id: n2-standard-4
+    data_security_mode: USER_ISOLATION
+    autotermination_minutes: 120
+    autoscale:
+      min_workers: 1
+      max_workers: 1
+    gcp_attributes:
+      availability: ON_DEMAND_GCP
+      zone_id: HA
+    custom_tags:
+      workload: shared-analytics-custom
+      bootstrap: "true"

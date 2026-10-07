@@ -1,0 +1,11 @@
+# Settings shared by every stack.
+
+# GCP project that holds the Terraform state bucket and, unless an environment overrides it with
+# gcp_project_id in live/<env>/config.yaml, the Databricks workspaces and their storage.
+# Project IDs are globally unique, so the ID is appended to bucket names to keep them unique too.
+gcp_project_id: "project-14198bfd-ad7e-4e81-946"
+
+# Terraform state bucket: "<state.bucket_prefix>-<gcp_project_id>" (create it once, see DEPLOYMENT.md step 2.2).
+state:
+  bucket_prefix: "dbx-architect-lab-tfstate"
+  location: "us-central1"

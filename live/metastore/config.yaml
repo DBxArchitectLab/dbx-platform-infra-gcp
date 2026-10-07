@@ -1,0 +1,14 @@
+# Account-level Unity Catalog metastore (one per GCP region per Databricks account).
+# Requires a Databricks account admin.
+metastore:
+  name: "metastore-dbx-architect-lab"
+  # GCP region; must match the region of every workspace assigned to this metastore.
+  region: "us-central1"
+  # Optional metastore-level managed storage. Databricks recommends leaving it unset and giving each
+  # catalog its own storage root (workspace-bootstrap does this). If you set it, the bucket must already
+  # exist; Terraform creates a Databricks-managed GCP service account and grants it access to the bucket.
+  # storage_root: "gs://<bucket>/metastore"
+  force_destroy: true
+  # Optional: Unity Catalog owner principal name (e.g. group or user).
+  owner: "DBX_Architect_Lab_Admin"
+  data_access_name: "default"
