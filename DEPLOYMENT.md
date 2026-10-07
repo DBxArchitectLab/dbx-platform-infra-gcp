@@ -215,7 +215,7 @@ bash scripts/preflight-check.sh
 | Required APIs enabled | API errors during the workspace stack |
 | State bucket exists, deployer has object access | `terragrunt init`: `does not have storage.objects.list access` |
 | Deployer has Owner (or Editor + Project IAM Admin) | Workspace stack: `Required 'compute.networks.create' permission` |
-| Deployer has Token Creator on itself | CI **Show runtime identity** fails / `getOpenIdToken` denied |
+| Deployer has Token Creator on itself | Databricks provider: `getOpenIdToken` denied / `cannot configure default credentials` |
 | Workload Identity provider + repo binding | CI auth: `rejected by the attribute condition` / `getAccessToken` denied |
 | You can impersonate the deployer | Local runs and the remaining checks |
 | Databricks account API answers (401 / 403 decoded) | `cannot create metastore: Invalid Request` and any `databricks_mws_*` error |
@@ -285,9 +285,9 @@ rollout; their fixes are now built into the code, the setup script, or the check
 
 | Symptom | Cause and fix |
 | --- | --- |
-| `google-github-actions/auth`: `The given credential is rejected by the attribute condition` | Token claims don't match the provider condition. Compare the workflow's **Show OIDC claims** output (`repository_id`, `repository_owner_id`, `environment`) with the condition printed by the pre-flight check; make sure the job runs in a GitHub environment |
+| `google-github-actions/auth`: `The given credential is rejected by the attribute condition` | Token claims don't match the provider condition. The pre-flight check prints the condition: it requires org ID `336295900`, repo ID `1404588588` and a `dev`/`uat`/`prod` environment. Make sure the job runs in one of those GitHub environments |
 | `Permission 'iam.serviceAccounts.getAccessToken' denied` | Missing `roles/iam.workloadIdentityUser` binding for the repo, or a wrong project number in `GCP_WORKLOAD_IDENTITY_PROVIDER`. Re-run the setup script |
-| **Show runtime identity** fails / `iam.serviceAccounts.getOpenIdToken` denied / Databricks `cannot configure default credentials` | Deployer lacks Token Creator on itself. Re-run the setup script |
+| `iam.serviceAccounts.getOpenIdToken` denied / Databricks `cannot configure default credentials` | Deployer lacks Token Creator on itself. Re-run the setup script |
 | `get_env` error for `DATABRICKS_*` | Secret missing in the GitHub environment the stack runs in |
 
 ### Terraform state
