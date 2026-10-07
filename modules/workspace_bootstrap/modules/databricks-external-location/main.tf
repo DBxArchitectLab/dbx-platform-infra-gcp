@@ -5,7 +5,7 @@ locals {
 }
 
 # On GCP the storage credential is backed by a service account that Databricks creates and manages; the
-# bucket grants it access below (no IAM role or trust policy, unlike AWS).
+# bucket grants it access below.
 resource "databricks_storage_credential" "this" {
   name = var.storage_credential_name
 

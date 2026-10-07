@@ -8,8 +8,7 @@ resource "databricks_sql_endpoint" "this" {
   auto_stop_mins            = try(each.value.auto_stop_mins, 20)
   enable_serverless_compute = try(each.value.enable_serverless_compute, null)
   warehouse_type            = try(each.value.warehouse_type, "PRO")
-  # AWS-only setting; leave it unset on GCP.
-  spot_instance_policy = try(each.value.spot_instance_policy, null)
+  spot_instance_policy      = try(each.value.spot_instance_policy, null)
 
   dynamic "tags" {
     for_each = [

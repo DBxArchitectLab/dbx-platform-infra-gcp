@@ -1,4 +1,3 @@
-# spot_instance_policy is AWS-only and is left out on GCP.
 sql_warehouses:
   sql-wh-small:
     cluster_size: Small

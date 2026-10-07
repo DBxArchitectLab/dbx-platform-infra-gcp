@@ -1,4 +1,4 @@
-# Node types are GCP machine types (n2-standard-4 ~ AWS m5d.xlarge, n2-standard-8 ~ m5d.2xlarge).
+# Node types are GCP machine types (n2-standard-4: 4 vCPU / 16 GB, n2-standard-8: 8 vCPU / 32 GB).
 # gcp_attributes.availability: ON_DEMAND_GCP, PREEMPTIBLE_GCP or PREEMPTIBLE_WITH_FALLBACK_GCP.
 # gcp_attributes.zone_id: HA (Databricks picks a zone), AUTO, or a specific zone such as us-central1-a.
 clusters:

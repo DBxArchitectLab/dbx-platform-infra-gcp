@@ -1,6 +1,5 @@
 # On GCP, Databricks creates the workspace's GCS root bucket and compute service account in the project
-# itself, using the permissions of the identity that creates the workspace (there are no credential or
-# storage configuration objects, unlike AWS).
+# itself, using the permissions of the identity that creates the workspace.
 resource "databricks_mws_workspaces" "this" {
   provider = databricks.account
 

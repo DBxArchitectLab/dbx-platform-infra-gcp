@@ -132,7 +132,7 @@ gcloud storage buckets update "gs://$STATE_BUCKET" --versioning
 ### 2.3 Deployer service account
 
 Every stack runs as this service account. Databricks on GCP only accepts Google-issued OIDC tokens for account-level
-APIs, so it replaces the Databricks service principal + OAuth secret used on AWS.
+APIs (no Databricks OAuth secret is involved).
 
 ```bash
 SA_NAME="sa-dbx-platform-infra"
@@ -212,8 +212,7 @@ gcloud compute regions describe "$REGION" --format=json \
 1. **Account and ID.** Sign in to the account console at <https://accounts.gcp.databricks.com> as an account
    admin and copy the account ID from the user menu (top right). Check the plan: **Enterprise** is needed for
    PSC (step 1).
-2. **Add the deployer service account as an account admin.** On GCP this replaces the Databricks service
-   principal with an OAuth secret. **User management → Users → Add user**, with the service account email from
+2. **Add the deployer service account as an account admin.** **User management → Users → Add user**, with the service account email from
    step 2.3 (`sa-dbx-platform-infra@<project-id>.iam.gserviceaccount.com`) as the email. Open it → **Roles** tab →
    turn on **Account admin**. There is no secret to generate: the service account proves its identity with
    Google-issued tokens.
@@ -271,8 +270,7 @@ that group, covers this.
 
    The `metastore` stack runs in the `dev` environment. The workflow passes `GCP_DEPLOYER_SERVICE_ACCOUNT` to
    Terraform as `DATABRICKS_GOOGLE_SERVICE_ACCOUNT`, which is also the principal added to the catalog and external
-   location grants, so no other secret is needed. The AWS secrets (`AWS_ROLE_ARN`, `DATABRICKS_CLIENT_ID`,
-   `DATABRICKS_CLIENT_SECRET`) aren't used.
+   location grants, so no other secret is needed.
 
 ## 5. Deploy
 
@@ -380,7 +378,7 @@ $env:DATABRICKS_METASTORE_ID            = "<metastore-id>"
 cd live\dev\workspace; terragrunt plan
 ```
 
-Make sure `DATABRICKS_CLIENT_ID` / `DATABRICKS_CLIENT_SECRET` are **not** set (e.g. left over from the AWS repo),
+Make sure `DATABRICKS_CLIENT_ID` / `DATABRICKS_CLIENT_SECRET` are **not** set in your shell,
 otherwise the Databricks provider picks OAuth instead of Google authentication.
 
 To run `workspace-bootstrap` as your own Databricks user instead of the service account, unset

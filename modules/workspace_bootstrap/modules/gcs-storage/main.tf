@@ -8,7 +8,7 @@ resource "google_storage_bucket" "this" {
   force_destroy = var.force_destroy
   labels        = var.labels
 
-  # IAM-only access control (no object ACLs) and no public access, the equivalent of an S3 public access block.
+  # IAM-only access control (no object ACLs) and no public access.
   uniform_bucket_level_access = true
   public_access_prevention    = "enforced"
 }

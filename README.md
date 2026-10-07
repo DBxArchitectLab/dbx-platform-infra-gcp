@@ -33,7 +33,7 @@ This repository provisions Databricks workspaces on Google Cloud with:
   - PSC subnet, internal addresses and forwarding rules, private DNS zone (when PSC is on)
   - Databricks network configuration, VPC endpoint registrations, private access settings
   - Databricks workspace. Databricks itself creates the workspace's GCS root bucket and compute service account in
-    the project, so there is no cross-account role or root-bucket module (unlike AWS).
+    the project.
   - Unity Catalog metastore assignment
   - Workspace admin assignment for an account-level group
 
@@ -108,26 +108,3 @@ Run `terragrunt plan` first in each directory.
 `dev-*`, `uat-*` or `prod-*`) and an action (`validate`, `plan`, `apply` or `destroy`). The job runs in the
 matching GitHub environment (`prod-*` → `prod`, `uat-*` → `uat`, everything else → `dev`) and reads its
 secrets from there.
-
-## Ported from AWS
-
-This repo was ported from `dbx-platform-infra-aws`. The stack layout, workflow and configuration style are the same.
-The cloud resources map like this:
-
-| AWS | GCP |
-| --- | --- |
-| AWS account ID suffix on bucket names | GCP project ID suffix |
-| S3 state bucket + `use_lockfile` | GCS state bucket (native locking) |
-| GitHub OIDC → IAM role | GitHub OIDC → Workload Identity Federation → deployer service account |
-| Databricks service principal (OAuth M2M) | Deployer GCP service account (Google ID tokens) |
-| VPC, two AZ subnets, route tables | VPC with one regional subnet |
-| Security group | Firewall rule `db-<subnet>-ingress` |
-| Internet gateway + NAT gateway + EIP | Cloud Router + Cloud NAT |
-| S3 gateway endpoint | Private Google Access |
-| PrivateLink (workspace + relay VPC endpoints) | Private Service Connect (forwarding rules + private DNS zone) |
-| Cross-account IAM role + `databricks_mws_credentials` | Not needed (Databricks creates its compute service account) |
-| S3 root bucket + `databricks_mws_storage_configurations` | Not needed (Databricks creates the root GCS bucket) |
-| UC IAM role + trust policy (external ID) | Databricks-managed GCP service account + bucket IAM |
-| `aws_attributes`, `m5d.*` node types | `gcp_attributes`, `n2-standard-*` node types |
-| Tags | Labels (lowercase keys and values) |
-| `us-east-2` | `us-central1` |
