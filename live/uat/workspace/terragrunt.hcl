@@ -17,10 +17,11 @@ inputs = merge(
     workspace_name = local.config.workspace_name
     region         = local.config.region
 
-    vpc_name         = local.config.network.vpc_name
-    node_subnet_cidr = local.config.network.node_subnet_cidr
-    psc_subnet_cidr  = try(local.config.network.psc_subnet_cidr, null)
-    nat_enabled      = try(local.config.network.nat_enabled, true)
+    vpc_name               = local.config.network.vpc_name
+    databricks_name_prefix = try(local.config.network.databricks_name_prefix, null)
+    node_subnet_cidr       = local.config.network.node_subnet_cidr
+    psc_subnet_cidr        = try(local.config.network.psc_subnet_cidr, null)
+    nat_enabled            = try(local.config.network.nat_enabled, true)
 
     psc_enabled                  = try(local.config.private_service_connect.enabled, false)
     public_access_enabled        = try(local.config.private_service_connect.public_access_enabled, true)

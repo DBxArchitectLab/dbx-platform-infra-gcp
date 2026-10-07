@@ -14,6 +14,12 @@ variable "vpc_name" {
   type = string
 }
 
+variable "databricks_name_prefix" {
+  type        = string
+  default     = null
+  description = "Prefix for Databricks account objects (network, VPC endpoints, private access settings); max 22 characters. Defaults to vpc_name without a leading \"vpc-\"."
+}
+
 variable "node_subnet_cidr" {
   type        = string
   description = "Cluster VM subnet (netmask between /29 and /9)."
