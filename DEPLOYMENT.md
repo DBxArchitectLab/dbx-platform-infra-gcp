@@ -145,6 +145,12 @@ gcloud iam service-accounts create "$SA_NAME" --display-name="Databricks platfor
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:$SA_EMAIL" --role="roles/owner" --condition=None
 
+# Explicit read/write on the Terraform state bucket (step 2.2). Basic roles such as Owner don't reliably grant
+# object access on a bucket with uniform bucket-level access; without this, `terragrunt init` fails with
+# "does not have storage.objects.list access".
+gcloud storage buckets add-iam-policy-binding "gs://dbx-architect-lab-tfstate-$PROJECT_ID" \
+  --member="serviceAccount:$SA_EMAIL" --role="roles/storage.objectAdmin"
+
 # The Databricks provider mints Google ID/access tokens for this service account by impersonation, so it must be
 # allowed to impersonate itself (CI), and you must be allowed to impersonate it (local runs, step 3.6).
 for MEMBER in "serviceAccount:$SA_EMAIL" "user:$ME"; do
@@ -327,7 +333,7 @@ Repeat 5.2 with the `uat-*` stacks, then the `prod-*` stacks.
 | `google-github-actions/auth`: `The given credential is rejected by the attribute condition` | The token's claims don't match the provider condition. Compare the **Show OIDC claims** output (`repository_id`, `repository_owner_id`, `environment`) with step 2.4, and check that the job runs in a GitHub environment |
 | `Permission 'iam.serviceAccounts.getAccessToken' denied` (auth step or `terragrunt init`) | The `roles/iam.workloadIdentityUser` binding for the pool's `principalSet` is missing or uses the wrong project number / repo ID (step 2.4) |
 | `iam.serviceAccounts.getOpenIdToken` denied / **Show runtime identity** fails / Databricks `cannot configure default credentials` | The service account lacks `roles/iam.serviceAccountTokenCreator` on itself (CI) or your user lacks it (local) (step 2.3) |
-| `terragrunt init` fails: bucket doesn't exist / 403 | State bucket from step 2.2 missing, created in another project, or `gcp_project_id` in `live/common.yaml` is wrong |
+| `terragrunt init`: `does not have storage.objects.list access to the Google Cloud Storage bucket ... (or it may not exist)` | Authentication worked; the state bucket is the problem. Either it doesn't exist under that exact name (step 2.2; `gcp_project_id` in `live/common.yaml` must be the project **ID**, not its name or number), or the service account has no object access on it: grant `roles/storage.objectAdmin` on the bucket (step 2.3). Also check that the `GCP_DEPLOYER_SERVICE_ACCOUNT` secret is the service account in this project |
 | `get_env` error for `DATABRICKS_*` | Secret missing in the GitHub environment the stack runs in |
 | Databricks `401` / `User not authorized` / `PERMISSION_DENIED` on `databricks_mws_*` | The service account isn't a user in the Databricks account, or isn't an account admin (step 3.2) |
 | `databricks_mws_workspaces`: permission errors on the project, IAM, or service usage | The service account lacks `roles/owner` (or Editor + Project IAM Admin) on the project, or the project's APIs aren't enabled (step 2.1) |
