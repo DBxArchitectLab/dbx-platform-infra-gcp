@@ -1,396 +1,399 @@
 # Deployment guide
 
-How to deploy this repository into a GCP project and a Databricks account (on GCP) using the GitHub Actions
-workflow (`.github/workflows/terragrunt-deploy.yml`), or locally.
+How to deploy this repository into a GCP project and a Databricks account on GCP. Deployments normally run
+from the GitHub Actions workflow (`.github/workflows/terragrunt-deploy.yml`); they can also run locally (section 9).
 
-Deployment order:
+This guide reflects the first full rollout (metastore, then dev, uat and prod workspaces and bootstraps). Every
+problem found during that rollout is either prevented by the setup script, caught by the pre-flight check, or
+listed in **Troubleshooting** with its exact error message.
 
 ```
-Before you begin (accounts)  →  0. Tools  →  1. Repo config  →  2. GCP prerequisites (Cloud Shell)
-                                                                                     │
-   3. Databricks account  →  4. GitHub setup  →  5. Deploy: metastore → dev-workspace → dev-workspace-bootstrap → (uat, prod)
+Before you begin  →  1. Repo config  →  2. GCP setup script  →  3. Databricks account  →  4. GitHub
+                                                                                            │
+     8. Verify  ←  7. Deploy (metastore → dev → uat → prod)  ←  6. Pre-flight check  ←──────┘
 ```
 
-Values used throughout this guide (change them if yours differ):
+## Reference values
 
 | Name | Value | Defined in |
 | --- | --- | --- |
-| GCP project ID | `dbx-architect-lab` (placeholder, **set your own**) | `live/common.yaml` (`gcp_project_id`), optionally per env in `live/<env>/config.yaml` |
+| GCP project ID | `project-14198bfd-ad7e-4e81-946` | `live/common.yaml` (`gcp_project_id`); per env override in `live/<env>/config.yaml` |
 | GCP region | `us-central1` | `live/<env>/config.yaml`, `live/metastore/config.yaml`, `live/common.yaml` (`state.location`) |
 | Terraform state bucket | `dbx-architect-lab-tfstate-<project-id>` | `live/common.yaml` + `live/root.hcl` |
 | Unity Catalog buckets | `dbx-architect-lab-<env>-uc-<project-id>` | `live/<env>/workspace-bootstrap/gcs-storage-config.yaml` |
-| Deployer service account | `sa-dbx-platform-infra@<project-id>.iam.gserviceaccount.com` | step 2.3 |
+| Deployer service account | `sa-dbx-platform-infra@<project-id>.iam.gserviceaccount.com` | `scripts/setup-gcp-prerequisites.sh` |
+| Workload Identity pool / provider | `github` / `dbx-platform-infra-gcp` | `scripts/setup-gcp-prerequisites.sh` |
+| Databricks account console | <https://accounts.gcp.databricks.com> | |
 | Admin group | `DBX_Architect_Lab_Admin` | `live/<env>/config.yaml`, `live/metastore/config.yaml` |
-| GitHub repo | `DBxArchitectLab/dbx-platform-infra-gcp` (org ID `336295900`, repo ID `1404588588`) | Workload Identity provider condition (step 2.4) |
+| GitHub repo | `DBxArchitectLab/dbx-platform-infra-gcp` (org ID `336295900`, repo ID `1404588588`) | Workload Identity provider condition |
+
+The Databricks account ID is not stored in the repo (the repo is public). It lives only in the
+`DATABRICKS_ACCOUNT_ID` GitHub secret and in the commands you run.
+
+## How authentication works
+
+Databricks on GCP accepts **only Google-issued OIDC tokens** for account-level APIs (creating workspaces,
+networks, metastores). So every stack runs as one GCP service account, the **deployer**. No Databricks OAuth
+secret is used.
+
+```
+GitHub Actions job (environment dev/uat/prod)
+   │  GitHub OIDC token
+   ▼
+Workload Identity Federation (pool "github", provider "dbx-platform-infra-gcp": this repo + environment only)
+   │  impersonates
+   ▼
+Deployer service account ──► Google provider + GCS state backend (project Owner, state bucket object admin)
+   │  impersonates itself (Token Creator) to mint Google ID + access tokens
+   ▼
+Databricks provider ──► account APIs (deployer is a Databricks account admin)
+                    └─► workspace APIs (deployer is in DBX_Architect_Lab_Admin → workspace + metastore admin)
+```
+
+Each link in this chain was a separate failure point during the first rollout; the pre-flight check (section 6)
+tests all of them.
 
 ---
 
 ## Before you begin: accounts
 
-1. **A GCP project with billing.** Create a project (or use an existing one) linked to an active billing account.
-   The free trial can work for a small lab, but its CPU quotas are low (see step 2.5). A dev environment has a small
-   fixed cost (Cloud NAT) on top of cluster usage.
+1. **A GCP project with billing.** Create a project linked to an active billing account. The free trial can work
+   for a small lab, but its CPU quotas are low (section 2.2). Each environment has a small fixed cost (Cloud NAT)
+   on top of cluster usage.
 2. **A Databricks account on GCP.** Subscribe through **Google Cloud Marketplace** (search "Databricks" →
    **Subscribe**, pick the billing account → **Sign up with Databricks**) or at
    <https://www.databricks.com/try-databricks>, choosing Google Cloud. The person who subscribes becomes the first
-   **account admin**. The account console is <https://accounts.gcp.databricks.com>.
-   - The tier matters: **Premium** works with this repo as configured; **Enterprise** is needed to turn on
-     Private Service Connect (step 1).
-   - If the signup created a default workspace or a Unity Catalog metastore, this repo doesn't manage it. Check
-     step 3.5 for the metastore.
-3. **If the project sits in a GCP Organization** with organization policies, check these before you start:
-   - `constraints/iam.allowedPolicyMemberDomains` (domain-restricted sharing) can block the IAM bindings Databricks
-     adds for its own service accounts during workspace creation and for Unity Catalog storage credentials. See
-     **Troubleshooting**.
-   - `constraints/compute.vmExternalIpAccess` is fine: cluster VMs have no public IPs.
+   **account admin**.
+   - This is a **separate account from any Databricks account on AWS or Azure**, with its own account ID.
+   - **Premium** works with this repo as configured; **Enterprise** is needed for Private Service Connect.
+3. **If the project sits in a GCP Organization**, check these organization policies before you start:
+   - `constraints/iam.allowedPolicyMemberDomains` (domain-restricted sharing) can block the IAM bindings for
+     Databricks-owned service accounts (workspace creation, Unity Catalog storage credentials).
    - `constraints/gcp.resourceLocations` must allow your region.
+   - `constraints/compute.vmExternalIpAccess` is fine: cluster VMs have no public IPs.
 
-## 0. Tools (for local runs and the one-time setup)
+### Tools
 
 | Tool | Version | Notes |
 | --- | --- | --- |
-| gcloud CLI | recent | For steps 2.x. Not needed if you use **Cloud Shell** (recommended, see step 2) |
-| Terraform | ≥ 1.10 (CI uses 1.14.6) | |
-| Terragrunt | recent (CI uses 0.99.4) | Match CI for local runs; very old releases (e.g. 0.63) use older CLI flags |
-| Databricks CLI | optional | Only for local runs as your own user (`databricks auth login`) |
+| Cloud Shell | | Recommended for sections 2, 3 and 6: has `gcloud`, `jq`, `git` and is already signed in |
+| Terraform | ≥ 1.10 (CI uses 1.14.6) | Only for local runs |
+| Terragrunt | CI uses 0.99.4 | Only for local runs; match the CI version (very old releases such as 0.63 use older CLI flags) |
+| Databricks CLI | optional | Only for local runs as your own user |
 
-## 1. Finish the repo configuration
+## 1. Repo configuration
 
 Edit and commit these before the first run.
 
-- [ ] **GCP project.** Set `gcp_project_id` in `live/common.yaml` to your project ID. All environments use it unless
-      a `live/<env>/config.yaml` sets its own `gcp_project_id` (to give an environment its own project; repeat the
-      step 2 grants in that project).
+- [ ] **GCP project.** `gcp_project_id` in `live/common.yaml` must be the project **ID** (not its display name or
+      number). All environments use it unless `live/<env>/config.yaml` sets its own `gcp_project_id`; in that
+      case, run the setup script (section 2) for that project too.
 - [ ] **Region.** Everything defaults to `us-central1`. To change it, update `region` in every
       `live/<env>/config.yaml`, `metastore.region` in `live/metastore/config.yaml`, `state.location` in
-      `live/common.yaml`, and the PSC service attachments (below). The metastore and all workspaces must be in the
-      same region, and the region must be one Databricks supports on GCP.
-- [ ] **Private Service Connect (`private_service_connect.enabled` in `live/<env>/config.yaml`).** Off,
-      because **back-end PSC requires the Enterprise tier**. Clusters reach the control plane through Cloud NAT.
-      After an upgrade to Enterprise, set `enabled: true` to add the PSC endpoints and the private DNS zone.
-- [ ] **PSC service attachments.** `workspace_service_attachment` and `relay_service_attachment` are
-      region-specific. Check the values against the Databricks table at
-      <https://docs.databricks.com/gcp/en/resources/ip-domain-region#psc>.
+      `live/common.yaml`, and the PSC service attachments. The metastore and all workspaces must be in the same
+      region.
+- [ ] **Names that have length limits:**
+  - Databricks account objects on GCP (network configuration, PSC endpoints, private access settings) must match
+    `^[a-zA-Z0-9-_]{3,30}$`. The module names them `<prefix>-network`, `<prefix>-ws`, `<prefix>-relay` and
+    `<prefix>-pas`, where the prefix is `network.databricks_name_prefix` (default: `vpc_name` without `vpc-`,
+    e.g. `dbx-architect-lab-prod`). The prefix must be at most **22** characters; the plan fails early if not.
+  - GCS bucket names are at most **63** characters: `<name_prefix>-<project-id>`. With this project ID the longest
+    is 56.
 - [ ] **CIDRs.** dev, uat and prod use node subnets `10.0.0.0/22`, `10.1.0.0/22` and `10.2.0.0/22` (PSC subnets
-      `10.x.4.0/28`). Each cluster node uses one IP. Change them if they overlap with networks you plan to peer with.
+      `10.x.4.0/28`). Change them if they overlap with networks you plan to peer with.
+- [ ] **Private Service Connect** (`private_service_connect.enabled` in `live/<env>/config.yaml`). Off: it
+      requires the **Enterprise** tier. Clusters reach the control plane through Cloud NAT. To turn it on, also
+      check `workspace_service_attachment` and `relay_service_attachment` against
+      <https://docs.databricks.com/gcp/en/resources/ip-domain-region#psc>.
 - [ ] **Grant principals.** `grant_principals` in `catalog-config.yaml` and `external-location-config.yaml`
-      (e.g. `dbxarchitectlab@gmail.com`) must be users or groups that exist in the Databricks account.
-- [ ] **Metastore owner.** `metastore.owner` in `live/metastore/config.yaml` must exist in the account.
-      Recommended: the group `DBX_Architect_Lab_Admin` (step 3).
-- [ ] **Labels.** `labels` in `live/<env>/config.yaml` become GCP labels: lowercase keys and values, letters, digits,
-      `_` and `-` only. Terraform rejects anything else.
-- [ ] **Bucket name length.** GCS names are at most 63 characters. `dbx-architect-lab-prod-uc-` plus your project ID
-      must fit; shorten `name_prefix` if your project ID is long.
+      (e.g. `dbxarchitectlab@gmail.com`) must exist in the Databricks account (section 3).
+- [ ] **Metastore owner.** `metastore.owner` in `live/metastore/config.yaml`: keep `DBX_Architect_Lab_Admin`.
+- [ ] **Labels.** `labels` in `live/<env>/config.yaml` become GCP labels: lowercase keys and values, letters,
+      digits, `_` and `-` only.
 
-## 2. GCP prerequisites
+## 2. GCP setup (one script)
 
-Run these as a user with **Owner** on the project.
+`scripts/setup-gcp-prerequisites.sh` does all GCP setup. It is safe to re-run: existing resources are kept,
+IAM bindings are only added, and the Workload Identity provider's condition is refreshed.
 
-**Recommended: Cloud Shell.** Open the GCP console, select the project, and click **Activate Cloud Shell** (`>_`)
-in the top bar. Cloud Shell has `gcloud` and `jq` installed and is already signed in as you. Paste the commands below
-into it. Alternatively, use gcloud on your machine (step 0).
+Open the GCP console, select the project, click **Activate Cloud Shell** (`>_`), and run as a user with
+**Owner** on the project:
 
 ```bash
-export PROJECT_ID="<your-project-id>"          # same value as gcp_project_id in live/common.yaml
-export REGION="us-central1"
-gcloud config set project "$PROJECT_ID"
-PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')
-ME=$(gcloud config get-value account)
-echo "$PROJECT_ID / $PROJECT_NUMBER / $ME"
+git clone https://github.com/DBxArchitectLab/dbx-platform-infra-gcp.git
+cd dbx-platform-infra-gcp
+PROJECT_ID="project-14198bfd-ad7e-4e81-946" bash scripts/setup-gcp-prerequisites.sh
 ```
 
-### 2.1 Enable APIs
+### 2.1 What the script does
 
-```bash
-gcloud services enable \
-  compute.googleapis.com \
-  storage.googleapis.com \
-  iam.googleapis.com \
-  iamcredentials.googleapis.com \
-  sts.googleapis.com \
-  cloudresourcemanager.googleapis.com \
-  serviceusage.googleapis.com \
-  dns.googleapis.com
-```
+| Step | What | Why |
+| --- | --- | --- |
+| 1 | Enables `compute`, `storage`, `iam`, `iamcredentials`, `sts`, `cloudresourcemanager`, `serviceusage`, `dns` | `iamcredentials`/`sts` for Workload Identity and impersonation; `dns` only for PSC. Databricks enables anything else it needs |
+| 2 | Creates `gs://dbx-architect-lab-tfstate-<project-id>` (uniform access, public access prevention, versioning) | Terraform state. The GCS backend locks natively |
+| 3 | Creates `sa-dbx-platform-infra` | The deployer identity |
+| 4a | Grants the deployer `roles/owner` on the project | Creates the VPC, NAT, firewall and buckets. Databricks also uses the creator's permissions to set up each workspace (service account, custom roles, IAM bindings) |
+| 4b | Grants the deployer `roles/storage.objectAdmin` **on the state bucket** | Project Owner doesn't reliably grant object access on a uniform-access bucket; without this `terragrunt init` fails |
+| 4c | Grants `roles/iam.serviceAccountTokenCreator` on the deployer to **itself** and to **you** | The Databricks provider mints Google tokens by impersonating the deployer, in CI (itself) and locally/pre-flight (you) |
+| 5 | Creates the Workload Identity pool `github` and provider `dbx-platform-infra-gcp`, and grants the repo `roles/iam.workloadIdentityUser` on the deployer | Keyless GitHub Actions auth, limited to this repo (`repository_id 1404588588`, org `336295900`) and its `dev`, `uat`, `prod` environments |
+| 6 | Prints the two GitHub secret values | Used in section 4 |
 
-`iamcredentials` and `sts` are needed for Workload Identity Federation and service account impersonation; `dns` only
-matters with PSC. Databricks enables anything else it needs during workspace creation.
+**Least privilege.** `roles/owner` keeps a lab simple. For production, run the script with
+`SA_PROJECT_ROLES="roles/editor roles/resourcemanager.projectIamAdmin roles/storage.admin roles/dns.admin"`.
+Editor + Project IAM Admin is the minimum Databricks documents for workspace creation; Storage Admin lets
+Terraform set bucket IAM for Unity Catalog; DNS Admin is only needed with PSC.
 
-### 2.2 Terraform state bucket
+### 2.2 CPU quota
 
-`live/root.hcl` expects `dbx-architect-lab-tfstate-<project-id>` in `us-central1`. The GCS backend locks state
-natively, so no lock table is needed.
-
-```bash
-STATE_BUCKET="dbx-architect-lab-tfstate-$PROJECT_ID"
-
-gcloud storage buckets create "gs://$STATE_BUCKET" --location="$REGION" \
-  --uniform-bucket-level-access --public-access-prevention
-gcloud storage buckets update "gs://$STATE_BUCKET" --versioning
-```
-
-### 2.3 Deployer service account
-
-Every stack runs as this service account. Databricks on GCP only accepts Google-issued OIDC tokens for account-level
-APIs (no Databricks OAuth secret is involved).
-
-```bash
-SA_NAME="sa-dbx-platform-infra"
-SA_EMAIL="$SA_NAME@$PROJECT_ID.iam.gserviceaccount.com"
-
-gcloud iam service-accounts create "$SA_NAME" --display-name="Databricks platform infra deployer"
-
-# Project permissions: create the VPC/NAT/firewall/buckets, and let Databricks set up the workspace
-# (it creates a service account, custom roles and IAM bindings in the project using the creator's permissions).
-gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-  --member="serviceAccount:$SA_EMAIL" --role="roles/owner" --condition=None
-
-# Explicit read/write on the Terraform state bucket (step 2.2). Basic roles such as Owner don't reliably grant
-# object access on a bucket with uniform bucket-level access; without this, `terragrunt init` fails with
-# "does not have storage.objects.list access".
-gcloud storage buckets add-iam-policy-binding "gs://dbx-architect-lab-tfstate-$PROJECT_ID" \
-  --member="serviceAccount:$SA_EMAIL" --role="roles/storage.objectAdmin"
-
-# The Databricks provider mints Google ID/access tokens for this service account by impersonation, so it must be
-# allowed to impersonate itself (CI), and you must be allowed to impersonate it (local runs, step 3.6).
-for MEMBER in "serviceAccount:$SA_EMAIL" "user:$ME"; do
-  gcloud iam service-accounts add-iam-policy-binding "$SA_EMAIL" \
-    --member="$MEMBER" --role="roles/iam.serviceAccountTokenCreator"
-done
-
-echo "$SA_EMAIL"   # → GCP_DEPLOYER_SERVICE_ACCOUNT GitHub secret, and the user you add to Databricks in step 3.2
-```
-
-`roles/owner` keeps a lab simple. For production, Databricks documents the minimum as **Editor + Project IAM Admin**
-(`roles/editor`, `roles/resourcemanager.projectIamAdmin`) on the workspace project. Add **Storage Admin**
-(`roles/storage.admin`) so Terraform can set bucket IAM for Unity Catalog, and **DNS Admin** (`roles/dns.admin`) if
-PSC is on. The state bucket needs `roles/storage.objectAdmin`.
-
-### 2.4 Workload Identity Federation for GitHub Actions (no service account keys)
-
-The pool trusts GitHub's OIDC issuer. The provider only accepts tokens from this repo, and only for jobs running in
-its `dev`, `uat` or `prod` GitHub environments. The repo is matched by its numeric ID, which doesn't change if the
-repo or org is renamed.
-
-The repo ID of `DBxArchitectLab/dbx-platform-infra-gcp` is `1404588588`. To check it, run
-`curl -s https://api.github.com/repos/DBxArchitectLab/dbx-platform-infra-gcp | jq .id`, or look at the
-`repository_id` that the workflow's **Show OIDC claims** step prints.
-
-```bash
-REPO_ID="1404588588"
-GH_ORG_ID="336295900"
-
-gcloud iam workload-identity-pools create github \
-  --location=global --display-name="GitHub Actions"
-
-gcloud iam workload-identity-pools providers create-oidc dbx-platform-infra-gcp \
-  --location=global --workload-identity-pool=github \
-  --display-name="dbx-platform-infra-gcp" \
-  --issuer-uri="https://token.actions.githubusercontent.com" \
-  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_id=assertion.repository_id,attribute.environment=assertion.environment" \
-  --attribute-condition="assertion.repository_owner_id == '${GH_ORG_ID}' && assertion.repository_id == '${REPO_ID}' && assertion.environment in ['dev', 'uat', 'prod']"
-
-# Let workflow runs from this repo impersonate the deployer service account.
-gcloud iam service-accounts add-iam-policy-binding "$SA_EMAIL" \
-  --role="roles/iam.workloadIdentityUser" \
-  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github/attribute.repository_id/${REPO_ID}"
-
-echo "projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github/providers/dbx-platform-infra-gcp"
-# → save this as the GCP_WORKLOAD_IDENTITY_PROVIDER GitHub secret
-```
-
-A new provider can take a few minutes to start accepting tokens.
-
-### 2.5 Quotas
-
-Each environment uses one VPC, one Cloud Router and one Cloud NAT; the default quotas cover dev/uat/prod. The usual
-limit is **CPUs**: Databricks clusters on GCP use N2 machines by default, and new projects often have a low
-`N2_CPUS` (and `CPUS_ALL_REGIONS`) quota per region. The sample clusters can need up to ~80 vCPUs each at full
-autoscale. Check and request increases under **IAM & Admin → Quotas & System Limits**, or:
-
-```bash
-gcloud compute regions describe "$REGION" --format=json \
-  | jq -r '.quotas[] | select(.metric|test("^(CPUS|N2_CPUS|IN_USE_ADDRESSES|SSD_TOTAL_GB)$")) | "\(.metric)\t\(.usage)/\(.limit)"'
-```
+Databricks clusters on GCP use N2 machines, and new projects often have a low `N2_CPUS` / `CPUS` quota per
+region. The sample clusters in `cluster-config.yaml` can need up to ~80 vCPUs each at full autoscale. The
+pre-flight check prints current usage and limits; request increases under **IAM & Admin → Quotas & System
+Limits**.
 
 ## 3. Databricks account
 
-1. **Account and ID.** Sign in to the account console at <https://accounts.gcp.databricks.com> as an account
-   admin and copy the account ID from the user menu (top right). Check the plan: **Enterprise** is needed for
-   PSC (step 1).
-2. **Add the deployer service account as an account admin.** **User management → Users → Add user**, with the service account email from
-   step 2.3 (`sa-dbx-platform-infra@<project-id>.iam.gserviceaccount.com`) as the email. Open it → **Roles** tab →
-   turn on **Account admin**. There is no secret to generate: the service account proves its identity with
-   Google-issued tokens.
+In the account console <https://accounts.gcp.databricks.com>, signed in as an account admin:
+
+1. **Copy the account ID** from the user menu (top right). It goes into the `DATABRICKS_ACCOUNT_ID` secret. Use the
+   ID of the **GCP** account: an ID from a Databricks account on another cloud returns `401 Invalid Request`.
+2. **Add the deployer service account as an account admin.** This replaces the Databricks service principal +
+   OAuth secret used on other clouds; there is no secret to generate.
+   1. **User management → Users → Add user**. Email: `sa-dbx-platform-infra@<project-id>.iam.gserviceaccount.com`
+      (exactly as printed by the setup script). First/last name: anything, e.g. `sa-dbx` / `platform-infra`.
+   2. Open the user → **Roles** tab → turn on **Account admin**.
+
+   Until both are done, every Databricks call fails with `403 Invalid Request` (in Terraform:
+   `cannot create metastore: Invalid Request`).
 3. **Create the group `DBX_Architect_Lab_Admin`** (**User management → Groups**) and add the deployer service
-   account user and your user to it. The workspace stack makes this group a workspace admin, which is also how the
-   service account gets access to each workspace for the `workspace-bootstrap` stack.
-4. **Add the users** named in the `grant_principals` lists (**User management → Users**), if they don't
-   exist yet.
-5. **Check for an existing metastore.** Go to **Catalog** in the account console. An account can have only one
-   metastore per region, so if one already exists in `us-central1` the `metastore` stack will fail. Either:
-   - **Use it:** skip the `metastore` stack, copy that metastore's ID for step 4, and make
-     `DBX_Architect_Lab_Admin` its admin; or
-   - **Replace it:** delete it (only if nothing uses it), then deploy the `metastore` stack.
-
-The service account creates the storage credential, external location and catalog in `workspace-bootstrap`, so it
-must be a metastore admin. Setting `metastore.owner` to `DBX_Architect_Lab_Admin`, with the service account in
-that group, covers this.
-
-6. **(Optional) Check the service account from Cloud Shell.** This confirms you can impersonate it, that it's an
-   account admin, lists existing metastores, and checks the group:
-
-   ```bash
-   read -p "Databricks account ID: " DBX_ACCOUNT_ID
-   ACC="https://accounts.gcp.databricks.com"
-
-   TOKEN=$(gcloud auth print-identity-token --impersonate-service-account="$SA_EMAIL" \
-     --audiences="$ACC" --include-email 2>/dev/null)
-   [ -n "$TOKEN" ] && echo "OK: ID token issued" || echo "FAIL: no Token Creator on $SA_EMAIL (step 2.3)"
-
-   echo "== Metastores (PERMISSION_DENIED / 401 = service account isn't an account admin)"
-   curl -s -H "Authorization: Bearer $TOKEN" "$ACC/api/2.0/accounts/$DBX_ACCOUNT_ID/metastores" \
-     | jq -r 'if (.metastores | length) > 0 then (.metastores[] | "\(.region)  \(.name)  \(.metastore_id)")
-              elif .error_code then "FAIL: \(.error_code) \(.message)" else "none" end'
-
-   echo "== Group DBX_Architect_Lab_Admin members"
-   curl -s -G -H "Authorization: Bearer $TOKEN" --data-urlencode 'filter=displayName eq "DBX_Architect_Lab_Admin"' \
-     "$ACC/api/2.0/accounts/$DBX_ACCOUNT_ID/scim/v2/Groups" \
-     | jq -r '.Resources[0] // empty | .members[]? | "  - \(.display)"'
-   ```
+   account and your own user. The workspace stack makes this group workspace admin, and the metastore stack makes
+   it metastore owner. That is how the deployer gets the rights the bootstrap stack needs.
+4. **Add the users** named in the `grant_principals` lists (**User management → Users**).
+5. **Existing metastore?** An account can have only one metastore per region. The pre-flight check lists any
+   metastore in `us-central1`. If one exists, either use it (skip the metastore stack, put its ID in
+   `DATABRICKS_METASTORE_ID`, make `DBX_Architect_Lab_Admin` its owner under **Catalog → metastore → Edit**) or
+   delete it if nothing uses it.
 
 ## 4. GitHub setup
 
-1. **Merge to `main`.** A workflow that you start manually only appears in the **Actions** tab once it
-   exists on the default branch.
-2. **Create environments** under **Settings → Environments**: `dev`, `uat`, `prod`. The names must match
-   the Workload Identity provider condition (step 2.4). Consider adding required reviewers on `prod`.
-3. **Add these secrets to each environment:**
+1. **Merge to `main`.** A manually started workflow only appears under **Actions** once it is on the default
+   branch. (Runs can then target any branch with the **Use workflow from** selector.)
+2. **Create environments** under **Settings → Environments**: `dev`, `uat`, `prod`. The names must match the
+   Workload Identity provider condition. Consider required reviewers on `prod`.
+3. **Add these secrets to each of the three environments** (same values in all three):
 
    | Secret | Value |
    | --- | --- |
-   | `GCP_WORKLOAD_IDENTITY_PROVIDER` | `projects/<project-number>/locations/global/workloadIdentityPools/github/providers/dbx-platform-infra-gcp` (step 2.4) |
-   | `GCP_DEPLOYER_SERVICE_ACCOUNT` | `sa-dbx-platform-infra@<project-id>.iam.gserviceaccount.com` (step 2.3) |
-   | `DATABRICKS_ACCOUNT_ID` | account ID (step 3.1) |
-   | `DATABRICKS_METASTORE_ID` | metastore ID (set after step 5.1 or 3.5; any placeholder until then) |
+   | `GCP_WORKLOAD_IDENTITY_PROVIDER` | `projects/<project-number>/locations/global/workloadIdentityPools/github/providers/dbx-platform-infra-gcp` (printed by the setup script) |
+   | `GCP_DEPLOYER_SERVICE_ACCOUNT` | `sa-dbx-platform-infra@<project-id>.iam.gserviceaccount.com` (printed by the setup script) |
+   | `DATABRICKS_ACCOUNT_ID` | the GCP Databricks account ID (section 3.1) |
+   | `DATABRICKS_METASTORE_ID` | metastore ID; any placeholder until section 7.1 |
 
    The `metastore` stack runs in the `dev` environment. The workflow passes `GCP_DEPLOYER_SERVICE_ACCOUNT` to
    Terraform as `DATABRICKS_GOOGLE_SERVICE_ACCOUNT`, which is also the principal added to the catalog and external
-   location grants, so no other secret is needed.
+   location grants.
 
-## 5. Deploy
+## 5. Re-running after a failure
 
-Go to **Actions → Terragrunt Deploy Stacks → Run workflow**, choose a **stack** and an **action**. For
-each stack, run `plan` first, review the log, then run `apply`.
+Every stack is safe to re-apply. Resources created before a failure are in Terraform state; the next `apply`
+keeps them and continues where it stopped. After fixing a cause, push the fix (if any) and re-run the same stack
+with `apply`. Nothing needs to be cleaned up by hand.
 
-The **Show runtime identity** step fails early if the service account can't mint a Google ID token for itself. That
-is the most common setup error (step 2.3).
+## 6. Pre-flight check
 
-### 5.1 Metastore (once per region)
+Run this before the first deployment, and whenever a run fails with a permission or `Invalid Request` error. It
+is read-only and prints the fix for each failure. In Cloud Shell, from the repo directory:
 
-| Stack | Action |
+```bash
+PROJECT_ID="project-14198bfd-ad7e-4e81-946" \
+DBX_ACCOUNT_ID="<databricks-account-id>" \
+bash scripts/preflight-check.sh
+```
+
+| Check | Catches (error you would otherwise get) |
 | --- | --- |
-| `metastore` | `plan`, then `apply` |
+| Project ID resolves | Wrong `gcp_project_id` (state bucket "may not exist") |
+| Required APIs enabled | API errors during the workspace stack |
+| State bucket exists, deployer has object access | `terragrunt init`: `does not have storage.objects.list access` |
+| Deployer has Owner (or Editor + Project IAM Admin) | Workspace stack: `Required 'compute.networks.create' permission` |
+| Deployer has Token Creator on itself | CI **Show runtime identity** fails / `getOpenIdToken` denied |
+| Workload Identity provider + repo binding | CI auth: `rejected by the attribute condition` / `getAccessToken` denied |
+| You can impersonate the deployer | Local runs and the remaining checks |
+| Databricks account API answers (401 / 403 decoded) | `cannot create metastore: Invalid Request` and any `databricks_mws_*` error |
+| Existing metastore in the region | Metastore stack: region already has a metastore |
+| Admin group exists and contains the deployer | Workspace stack: group not found; bootstrap permission errors |
+| CPU quota | Clusters failing to start |
 
-Copy the metastore ID from the `metastore_id` output at the end of the apply log (or from the account
-console: **Catalog → your metastore**). Set it as `DATABRICKS_METASTORE_ID` in the `dev`, `uat` and `prod`
-environments. They share the metastore because they're in the same region.
+Expected result: `All checks passed.`, plus INFO lines with the two GitHub secret values, any existing metastore,
+and CPU quota.
 
-### 5.2 dev
+## 7. Deploy
 
-| Order | Stack | Creates |
-| --- | --- | --- |
-| 1 | `dev-dbxarchitectlab-workspace` | VPC, node subnet, firewall rule, Cloud Router + NAT (plus PSC subnet, endpoints and private DNS zone when `private_service_connect.enabled`), Databricks network configuration, workspace, metastore assignment, admin group assignment |
-| 2 | `dev-dbxarchitectlab-workspace-bootstrap` | Unity Catalog GCS bucket, storage credential (Databricks-managed service account) with bucket IAM, external location, catalog, grants, cluster policies, secret scope |
+Go to **Actions → Terragrunt Deploy Stacks → Run workflow**, choose a **stack** and an **action**. For each stack,
+run `plan`, review the log, then `apply`.
 
-Workspace creation usually takes a few minutes. While it runs, Databricks creates the workspace's GCS root bucket
-(`databricks-<workspace-id>` and related buckets) and a compute service account (`db-<workspace-id>@...`) in the
-project. The `workspace-bootstrap` stack reads the workspace URL from the `workspace` stack's state, so it must be
-applied afterwards.
+### 7.1 Metastore (once per region)
 
-### 5.3 uat and prod
+| Stack | Creates |
+| --- | --- |
+| `metastore` | Unity Catalog metastore `metastore-dbx-architect-lab` in `us-central1`, owned by `DBX_Architect_Lab_Admin` |
 
-Repeat 5.2 with the `uat-*` stacks, then the `prod-*` stacks.
+Copy `metastore_id` from the end of the apply log (or **Catalog** in the account console) into the
+`DATABRICKS_METASTORE_ID` secret of **all three** environments. They share the metastore.
 
-## 6. Verify
+### 7.2 dev, then uat, then prod
+
+For each environment, in this order:
+
+| Order | Stack | Creates | Duration |
+| --- | --- | --- | --- |
+| 1 | `<env>-dbxarchitectlab-workspace` | VPC, node subnet, firewall rule `db-<subnet>-ingress`, Cloud Router + NAT (plus PSC subnet, endpoints and private DNS zone if enabled), Databricks network configuration, workspace, metastore assignment, admin group assignment | ~5–10 min |
+| 2 | `<env>-dbxarchitectlab-workspace-bootstrap` | Unity Catalog GCS bucket, storage credential with bucket IAM, external location, catalog, workspace bindings, grants, cluster policies, secret scope | ~3–5 min |
+
+While the workspace is created, Databricks itself creates the workspace's GCS buckets (`databricks-<workspace-id>*`)
+and a compute service account (`db-<workspace-id>@...`) in the project; they are not in Terraform state.
+
+The bootstrap includes two deliberate waits:
+
+- **90 s** after creating the storage credential. Databricks creates the credential's service account
+  (`db-uc-credential-...@uc-<region>.iam.gserviceaccount.com`) in its own project, and GCP IAM needs time
+  before it accepts bucket bindings for it.
+- **30 s** after the bucket bindings, before creating the external location (which validates access).
+
+The bootstrap reads the workspace URL from the workspace stack's state, so it must run after it.
+
+## 8. Verify
+
+For each environment:
 
 - Account console → **Workspaces**: the workspace is **Running**; open its URL.
-- **Catalog:** the catalog from `catalog-config.yaml` is listed. Each environment's catalog, external location
-  and storage credential are bound to that environment's workspace only (`ISOLATED`), so the dev workspace shows
-  only `dbxarchitectlab_dev`, uat only `dbxarchitectlab_uat`, and prod only `dbxarchitectlab_prod`, even though they
-  share one metastore.
-- **Catalog → External data → External locations:** **Test connection** succeeds for the external location.
-- **Compute → Policies:** the cluster policies from `cluster-policy-config.yaml` exist.
-- **Settings → Identity and access:** `DBX_Architect_Lab_Admin` is a workspace admin.
-- GCP console → **VPC network → Firewall:** `db-vpc-dbx-architect-lab-<env>-nodes-ingress` exists.
-- Start a small cluster to confirm the network path (Cloud NAT and/or PSC) to the control plane works. Its VMs
-  appear under **Compute Engine → VM instances** with no external IP.
+- **Catalog**: only that environment's catalog is visible (`dbxarchitectlab_dev`, `_uat` or `_prod`). The
+  catalog, external location and storage credential are bound to their own workspace (`ISOLATED`) even though the
+  metastore is shared.
+- **Catalog → External data → External locations**: **Test connection** succeeds.
+- **Compute → Policies**: `shared_compute_customize` exists.
+- **Settings → Identity and access**: `DBX_Architect_Lab_Admin` is a workspace admin.
+- GCP console → **VPC network → Firewall**: `db-vpc-dbx-architect-lab-<env>-nodes-ingress` exists.
+- Start a small cluster. Its VMs appear under **Compute Engine → VM instances** with no external IP, which
+  confirms the Cloud NAT (or PSC) path to the control plane.
 
 ## Troubleshooting
 
-| Symptom | Likely cause |
+Start with the pre-flight check (section 6): it pinpoints most of these. Rows marked ✔ happened during the first
+rollout; their fixes are now built into the code, the setup script, or the check.
+
+### GitHub Actions authentication
+
+| Symptom | Cause and fix |
 | --- | --- |
-| `google-github-actions/auth`: `The given credential is rejected by the attribute condition` | The token's claims don't match the provider condition. Compare the **Show OIDC claims** output (`repository_id`, `repository_owner_id`, `environment`) with step 2.4, and check that the job runs in a GitHub environment |
-| `Permission 'iam.serviceAccounts.getAccessToken' denied` (auth step or `terragrunt init`) | The `roles/iam.workloadIdentityUser` binding for the pool's `principalSet` is missing or uses the wrong project number / repo ID (step 2.4) |
-| `iam.serviceAccounts.getOpenIdToken` denied / **Show runtime identity** fails / Databricks `cannot configure default credentials` | The service account lacks `roles/iam.serviceAccountTokenCreator` on itself (CI) or your user lacks it (local) (step 2.3) |
-| `terragrunt init`: `does not have storage.objects.list access to the Google Cloud Storage bucket ... (or it may not exist)` | Authentication worked; the state bucket is the problem. Either it doesn't exist under that exact name (step 2.2; `gcp_project_id` in `live/common.yaml` must be the project **ID**, not its name or number), or the service account has no object access on it: grant `roles/storage.objectAdmin` on the bucket (step 2.3). Also check that the `GCP_DEPLOYER_SERVICE_ACCOUNT` secret is the service account in this project |
+| `google-github-actions/auth`: `The given credential is rejected by the attribute condition` | Token claims don't match the provider condition. Compare the workflow's **Show OIDC claims** output (`repository_id`, `repository_owner_id`, `environment`) with the condition printed by the pre-flight check; make sure the job runs in a GitHub environment |
+| `Permission 'iam.serviceAccounts.getAccessToken' denied` | Missing `roles/iam.workloadIdentityUser` binding for the repo, or a wrong project number in `GCP_WORKLOAD_IDENTITY_PROVIDER`. Re-run the setup script |
+| **Show runtime identity** fails / `iam.serviceAccounts.getOpenIdToken` denied / Databricks `cannot configure default credentials` | Deployer lacks Token Creator on itself. Re-run the setup script |
 | `get_env` error for `DATABRICKS_*` | Secret missing in the GitHub environment the stack runs in |
-| Databricks `401` / `User not authorized` / `PERMISSION_DENIED` on `databricks_mws_*` | The service account isn't a user in the Databricks account, or isn't an account admin (step 3.2) |
-| `databricks_mws_workspaces`: permission errors on the project, IAM, or service usage | The service account lacks `roles/owner` (or Editor + Project IAM Admin) on the project, or the project's APIs aren't enabled (step 2.1) |
-| Workspace creation fails on IAM bindings with a domain / `allowedPolicyMemberDomains` error | An org policy restricts IAM members to your domain. Databricks adds bindings for its own service accounts; allow the Databricks customer ID in the policy or exempt the project |
-| `PSC ... requires ENTERPRISE` / private access settings rejected | Account isn't on the Enterprise tier; set `private_service_connect.enabled: false` |
-| PSC forwarding rule: service attachment not found / not in region | Wrong `*_service_attachment` for the region (step 1) |
-| Cluster fails to start: `Quota 'N2_CPUS' exceeded` / `CPUS` | Raise the region's CPU quotas (step 2.5) or use smaller node types / fewer workers |
-| Cluster fails to start: network / bootstrap timeout | The firewall rule `db-<subnet>-ingress` is missing, or there's no egress path (Cloud NAT off and PSC off/misconfigured). With PSC, check the private DNS records in the workspace output (`psc_dns_records`) |
-| Bucket IAM: `Service account db-uc-credential-...@uc-<region>.iam.gserviceaccount.com does not exist` | The service account Databricks created for the storage credential isn't visible to GCP IAM yet. The module waits 90 seconds before the bucket bindings; if it still happens, re-run `apply` (the credential already exists, so only the bindings are retried) |
-| External location validation fails (`403` on the bucket) | Bucket IAM propagation; re-run `apply`. If it persists, check that `uc_storage_service_account` has `storage.objectAdmin` and `storage.legacyBucketReader` on the bucket |
-| `default_labels keys and values must be lowercase...` | `labels` in `live/<env>/config.yaml` don't follow GCP label rules |
-| Metastore create fails: region already has a metastore | See step 3.5 |
-| Bucket name conflict / name too long | GCS names are global and at most 63 characters; change the `name_prefix` |
-| Permission denied creating catalog / external location | The service account isn't a metastore admin (step 3) |
-| Workspace group assignment fails: group not found | `DBX_Architect_Lab_Admin` doesn't exist in the account (step 3.3) |
 
-### Destroying
+### Terraform state
 
-Destroy in reverse order: `*-workspace-bootstrap`, then `*-workspace`, then `metastore`. Deleting a workspace makes
-Databricks clean up the resources it created in the project. Check afterwards for leftover `databricks-<workspace-id>*`
-buckets and `db-<workspace-id>` service accounts, and remove them manually if they remain.
+| Symptom | Cause and fix |
+| --- | --- |
+| ✔ `terragrunt init`: `does not have storage.objects.list access to the Google Cloud Storage bucket ... (or it may not exist)` | Authentication worked; the bucket is the problem. Either it doesn't exist under that exact name (`gcp_project_id` must be the project **ID**), or the deployer has no object access on it. The setup script now grants `roles/storage.objectAdmin` on the bucket. Also check `GCP_DEPLOYER_SERVICE_ACCOUNT` is the account in this project |
 
-## Running locally instead
+### Databricks account
 
-Run as the deployer service account, by impersonation, so local runs behave like CI. Your user needs Token Creator
-on it (step 2.3).
+The account API returns the same text, `Invalid Request`, for different problems; the HTTP code tells them apart.
+Terraform shows only the text, so run the pre-flight check (or the script below) to see the code.
+
+| Symptom | Cause and fix |
+| --- | --- |
+| ✔ `401 Invalid Request` | The account ID isn't a Databricks-on-GCP account ID: a placeholder, a typo, or the ID of an account on another cloud. Copy it from <https://accounts.gcp.databricks.com> and set it in all three environments |
+| ✔ `403 Invalid Request` / Terraform `cannot create metastore: Invalid Request` / errors on `databricks_mws_*` | The deployer isn't a user in the account, or isn't an account admin (section 3.2). Check the email matches the service account exactly |
+| Metastore create fails: region already has a metastore | Use or delete the existing one (section 3.5) |
+| Workspace group assignment fails: group not found | `DBX_Architect_Lab_Admin` doesn't exist (section 3.3) |
+| Permission denied creating catalog / external location / storage credential | Deployer isn't a metastore admin: it must be in `DBX_Architect_Lab_Admin`, and that group must own the metastore |
+
+To see the full response of an account API call, run in Cloud Shell:
+
+```bash
+ACC="https://accounts.gcp.databricks.com"
+DBX_ACCOUNT_ID="<databricks-account-id>"
+SA_EMAIL="sa-dbx-platform-infra@project-14198bfd-ad7e-4e81-946.iam.gserviceaccount.com"
+
+ID_TOKEN=$(gcloud auth print-identity-token --impersonate-service-account="$SA_EMAIL" --audiences="$ACC" --include-email 2>/dev/null)
+ACCESS_TOKEN=$(gcloud auth print-access-token --impersonate-service-account="$SA_EMAIL" 2>/dev/null)
+H=(-H "Authorization: Bearer $ID_TOKEN" -H "X-Databricks-GCP-SA-Access-Token: $ACCESS_TOKEN")
+
+curl -s "${H[@]}" "$ACC/api/2.0/accounts/$DBX_ACCOUNT_ID/metastores" | jq .
+curl -s "${H[@]}" "$ACC/api/2.0/accounts/$DBX_ACCOUNT_ID/workspaces" | jq '.[] | {workspace_name, workspace_id, workspace_status}'
+```
+
+### Workspace stack
+
+| Symptom | Cause and fix |
+| --- | --- |
+| ✔ `Error creating Network: ... Required 'compute.networks.create' permission` | The deployer has no project role (the Owner grant was missing). The setup script grants it; the pre-flight check verifies it. Wait 1–2 minutes after granting before re-running |
+| ✔ `cannot create mws networks: Malformed parameters: network_name ... is not of the form ^[a-zA-Z0-9-_]{3,30}$` | Databricks names on GCP are limited to 30 characters. Fixed in the module (short `databricks_name_prefix`); an over-long prefix now fails at plan time |
+| `databricks_mws_workspaces`: permission errors on the project, IAM, or service usage | Deployer lacks Owner (or Editor + Project IAM Admin), or APIs aren't enabled. Re-run the setup script |
+| Workspace creation fails with an `allowedPolicyMemberDomains` error | Organization policy restricts IAM members to your domain; allow the Databricks customer ID in the policy or exempt the project |
+| `PSC ... requires ENTERPRISE` / private access settings rejected | Account isn't on Enterprise; set `private_service_connect.enabled: false` |
+| PSC forwarding rule: service attachment not found | Wrong `*_service_attachment` for the region |
+
+### Workspace bootstrap stack
+
+| Symptom | Cause and fix |
+| --- | --- |
+| ✔ `Error setting IAM policy for storage bucket ...: Service account db-uc-credential-...@uc-<region>.iam.gserviceaccount.com does not exist` | The Databricks-created credential service account wasn't visible to GCP IAM yet. The module now waits 90 s first; if it still happens, re-run `apply` (only the bindings are retried) |
+| External location validation fails (`403` on the bucket) | Bucket IAM propagation; re-run `apply`. If it persists, check that `uc_storage_service_account` (stack output) has `storage.objectAdmin` and `storage.legacyBucketReader` on the bucket |
+| `default_labels keys and values must be lowercase...` | `labels` in `live/<env>/config.yaml` break GCP label rules |
+| Bucket name conflict / too long | GCS names are global and at most 63 characters; change `name_prefix` |
+
+### Clusters
+
+| Symptom | Cause and fix |
+| --- | --- |
+| `Quota 'N2_CPUS' exceeded` / `CPUS` | Raise the region's CPU quota (section 2.2) or use smaller node types / fewer workers |
+| Network or bootstrap timeout | Firewall rule `db-<subnet>-ingress` missing, or no egress path (Cloud NAT off and PSC off or misconfigured). With PSC, check the `psc_dns_records` output of the workspace stack |
+
+## Destroying
+
+Destroy in reverse order with the workflow's `destroy` action: `<env>-dbxarchitectlab-workspace-bootstrap`, then
+`<env>-dbxarchitectlab-workspace` (for each environment), then `metastore`. Deleting a workspace makes Databricks
+clean up the resources it created in the project; check afterwards for leftover `databricks-<workspace-id>*`
+buckets and `db-<workspace-id>` service accounts and remove them if they remain. The state bucket, deployer
+service account and Workload Identity pool are not managed by Terraform; delete them by hand if you retire the
+project.
+
+## 9. Running locally
+
+Run as the deployer by impersonation, so local runs behave like CI. Your user needs Token Creator on the deployer
+(the setup script grants it to whoever runs it).
 
 ```bash
 gcloud auth login
 gcloud auth application-default login
 
-SA_EMAIL="sa-dbx-platform-infra@<project-id>.iam.gserviceaccount.com"
-export GOOGLE_IMPERSONATE_SERVICE_ACCOUNT="$SA_EMAIL"    # google provider and gcs backend act as the service account
-export DATABRICKS_GOOGLE_SERVICE_ACCOUNT="$SA_EMAIL"     # Databricks provider impersonates it for Google ID tokens
+SA_EMAIL="sa-dbx-platform-infra@project-14198bfd-ad7e-4e81-946.iam.gserviceaccount.com"
+export GOOGLE_IMPERSONATE_SERVICE_ACCOUNT="$SA_EMAIL"    # Google provider and GCS backend act as the deployer
+export DATABRICKS_GOOGLE_SERVICE_ACCOUNT="$SA_EMAIL"     # Databricks provider impersonates it for Google tokens
 export DATABRICKS_ACCOUNT_ID="<databricks-account-id>"
 export DATABRICKS_METASTORE_ID="<metastore-id>"
 
 cd live/dev/workspace && terragrunt plan
 ```
 
-On Windows PowerShell:
+Windows PowerShell:
 
 ```powershell
 gcloud auth application-default login
-$env:GOOGLE_IMPERSONATE_SERVICE_ACCOUNT = "sa-dbx-platform-infra@<project-id>.iam.gserviceaccount.com"
+$env:GOOGLE_IMPERSONATE_SERVICE_ACCOUNT = "sa-dbx-platform-infra@project-14198bfd-ad7e-4e81-946.iam.gserviceaccount.com"
 $env:DATABRICKS_GOOGLE_SERVICE_ACCOUNT  = $env:GOOGLE_IMPERSONATE_SERVICE_ACCOUNT
 $env:DATABRICKS_ACCOUNT_ID              = "<databricks-account-id>"
 $env:DATABRICKS_METASTORE_ID            = "<metastore-id>"
 cd live\dev\workspace; terragrunt plan
 ```
 
-Make sure `DATABRICKS_CLIENT_ID` / `DATABRICKS_CLIENT_SECRET` are **not** set in your shell,
-otherwise the Databricks provider picks OAuth instead of Google authentication.
+Make sure `DATABRICKS_CLIENT_ID` / `DATABRICKS_CLIENT_SECRET` are **not** set in your shell; otherwise the
+Databricks provider uses OAuth instead of Google authentication.
 
-To run `workspace-bootstrap` as your own Databricks user instead of the service account, unset
-`DATABRICKS_GOOGLE_SERVICE_ACCOUNT`, run `databricks auth login --host <workspace-url>`, set
-`DATABRICKS_AUTH_TYPE=databricks-cli`, and set `DEPLOY_PRINCIPAL` to your Databricks user name (email). Your user
-needs the same permissions as the service account (workspace admin, metastore admin). The `workspace` and
-`metastore` stacks use the account-level provider, which needs Google authentication as an account admin; the
-simplest option is to keep using the service account for them.
+To run `workspace-bootstrap` as your own Databricks user instead, unset `DATABRICKS_GOOGLE_SERVICE_ACCOUNT`, run
+`databricks auth login --host <workspace-url>`, set `DATABRICKS_AUTH_TYPE=databricks-cli`, and set
+`DEPLOY_PRINCIPAL` to your Databricks user name (email). Your user needs the same rights as the deployer
+(workspace admin, metastore admin). The `workspace` and `metastore` stacks need Google authentication as an
+account admin; keep using the deployer for them.

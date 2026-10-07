@@ -55,7 +55,14 @@ This repository provisions Databricks workspaces on Google Cloud with:
 
 ## Prerequisites
 
-See [DEPLOYMENT.md](DEPLOYMENT.md) for the full setup and deployment steps. In short:
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the full setup and deployment steps. Two scripts cover the setup:
+
+- `scripts/setup-gcp-prerequisites.sh`: one-time GCP setup (APIs, state bucket, deployer service account and roles,
+  Workload Identity Federation). Safe to re-run.
+- `scripts/preflight-check.sh`: read-only check of every prerequisite, including the Databricks account; prints the
+  fix for each failure.
+
+In short:
 
 - GCP project with billing, required APIs enabled, and a GCS bucket `dbx-architect-lab-tfstate-<project-id>` for Terraform state
 - A deployer GCP service account that can impersonate itself, trusted by GitHub Workload Identity Federation for
