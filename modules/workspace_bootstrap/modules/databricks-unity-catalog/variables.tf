@@ -4,7 +4,7 @@ variable "catalog_name" {
 }
 
 variable "workspace_id" {
-  description = "ID of the workspace the catalog is bound to (the catalog is hidden from other workspaces)"
+  description = "ID of the workspace the catalog is bound to (bound automatically, as the creating workspace; hidden from other workspaces)"
   type        = number
 }
 

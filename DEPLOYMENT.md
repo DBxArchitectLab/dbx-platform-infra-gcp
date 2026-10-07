@@ -247,7 +247,7 @@ For each environment, in this order:
 | Order | Stack | Creates | Duration |
 | --- | --- | --- | --- |
 | 1 | `<env>-dbxarchitectlab-workspace` | VPC, node subnet, firewall rule `db-<subnet>-ingress`, Cloud Router + NAT (plus PSC subnet, endpoints and private DNS zone if enabled), Databricks network configuration, workspace, metastore assignment, admin group assignment | ~5–10 min |
-| 2 | `<env>-dbxarchitectlab-workspace-bootstrap` | Unity Catalog GCS bucket, storage credential with bucket IAM, external location, catalog, workspace bindings, grants, cluster policies, secret scope | ~3–5 min |
+| 2 | `<env>-dbxarchitectlab-workspace-bootstrap` | Unity Catalog GCS bucket, storage credential with bucket IAM, external location, catalog (all isolated to this environment's workspace), grants, cluster policies, secret scope | ~3–5 min |
 
 While the workspace is created, Databricks itself creates the workspace's GCS buckets (`databricks-<workspace-id>*`)
 and a compute service account (`db-<workspace-id>@...`) in the project; they are not in Terraform state.
@@ -343,6 +343,24 @@ curl -s "${H[@]}" "$ACC/api/2.0/accounts/$DBX_ACCOUNT_ID/workspaces" | jq '.[] |
 | External location validation fails (`403` on the bucket) | Bucket IAM propagation; re-run `apply`. If it persists, check that `uc_storage_service_account` (stack output) has `storage.objectAdmin` and `storage.legacyBucketReader` on the bucket |
 | `default_labels keys and values must be lowercase...` | `labels` in `live/<env>/config.yaml` break GCP label rules |
 | Bucket name conflict / too long | GCS names are global and at most 63 characters; change `name_prefix` |
+| ✔ Destroy: `cannot delete grants: Catalog '...' is not accessible in current workspace` | An earlier version removed the catalog's workspace binding before its grants. Fixed: isolated objects now keep the automatic binding to their own workspace until they are deleted. To recover a stack that already hit this, re-bind the catalog (script below), then re-run `destroy` with the fixed code |
+
+To re-bind an isolated catalog to its workspace (for example after the destroy error above), run in Cloud Shell
+with the workspace URL and ID from the account console (**Workspaces**):
+
+```bash
+WS_URL="https://<workspace-id>.<n>.gcp.databricks.com"
+WS_ID="<workspace-id>"
+CATALOG="dbxarchitectlab_prod"
+SA_EMAIL="sa-dbx-platform-infra@project-14198bfd-ad7e-4e81-946.iam.gserviceaccount.com"
+
+ID_TOKEN=$(gcloud auth print-identity-token --impersonate-service-account="$SA_EMAIL" --audiences="$WS_URL" --include-email 2>/dev/null)
+ACCESS_TOKEN=$(gcloud auth print-access-token --impersonate-service-account="$SA_EMAIL" 2>/dev/null)
+H=(-H "Authorization: Bearer $ID_TOKEN" -H "X-Databricks-GCP-SA-Access-Token: $ACCESS_TOKEN")
+
+curl -s "${H[@]}" -X PATCH "$WS_URL/api/2.1/unity-catalog/bindings/catalog/$CATALOG"   -d "{\"add\": [{\"workspace_id\": $WS_ID, \"binding_type\": \"BINDING_TYPE_READ_WRITE\"}]}" | jq .
+curl -s "${H[@]}" "$WS_URL/api/2.1/unity-catalog/catalogs/$CATALOG" | jq '{name, isolation_mode, owner}'
+```
 
 ### Clusters
 

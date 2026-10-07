@@ -11,7 +11,7 @@ variable "external_location_owner" {
 }
 
 variable "workspace_id" {
-  description = "ID of the workspace the storage credential and external location are bound to"
+  description = "ID of the workspace the storage credential and external location are bound to (bound automatically, as the creating workspace)"
   type        = number
 }
 
