@@ -1,5 +1,9 @@
 locals {
   node_subnet_name = "${var.vpc_name}-nodes"
+
+  # Databricks account objects (network, VPC endpoints, private access settings) on GCP must match
+  # ^[a-zA-Z0-9-_]{3,30}$. The prefix leaves room for the longest suffix ("-network").
+  dbx_name_prefix = coalesce(var.databricks_name_prefix, trimprefix(var.vpc_name, "vpc-"))
 }
 
 # --- VPC and subnets --------------------------------------------------------------------------------
@@ -123,7 +127,7 @@ resource "databricks_mws_vpc_endpoint" "this" {
   provider = databricks.account
 
   account_id        = var.databricks_account_id
-  vpc_endpoint_name = "${var.vpc_name}-${each.key}"
+  vpc_endpoint_name = "${local.dbx_name_prefix}-${each.key == "workspace" ? "ws" : each.key}"
 
   gcp_vpc_endpoint_info {
     project_id        = var.gcp_project_id
@@ -136,7 +140,7 @@ resource "databricks_mws_networks" "this" {
   provider = databricks.account
 
   account_id   = var.databricks_account_id
-  network_name = "${var.vpc_name}-network"
+  network_name = "${local.dbx_name_prefix}-network"
 
   gcp_network_info {
     network_project_id = var.gcp_project_id
@@ -154,6 +158,11 @@ resource "databricks_mws_networks" "this" {
   }
 
   lifecycle {
+    precondition {
+      condition     = can(regex("^[a-zA-Z0-9_-]{3,22}$", local.dbx_name_prefix))
+      error_message = "Databricks object name prefix \"${local.dbx_name_prefix}\" must be 3-22 letters, digits, '-' or '_' (Databricks names on GCP are limited to 30 characters). Set network.databricks_name_prefix in config.yaml."
+    }
+
     precondition {
       condition     = var.nat_enabled || var.psc_enabled
       error_message = "Clusters need a path to the Databricks control plane: enable nat_enabled, psc_enabled, or both."
@@ -175,7 +184,7 @@ resource "databricks_mws_private_access_settings" "this" {
   count    = var.psc_enabled ? 1 : 0
   provider = databricks.account
 
-  private_access_settings_name = "${var.vpc_name}-pas"
+  private_access_settings_name = "${local.dbx_name_prefix}-pas"
   region                       = var.region
   public_access_enabled        = var.public_access_enabled
   private_access_level         = "ACCOUNT"

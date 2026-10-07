@@ -8,6 +8,9 @@ region: "us-central1"
 
 network:
   vpc_name: "vpc-dbx-architect-lab-uat"
+  # Prefix for Databricks account objects (network config, PSC endpoints); max 22 characters because Databricks
+  # names on GCP are limited to 30. Defaults to vpc_name without "vpc-" (dbx-architect-lab-uat).
+  # databricks_name_prefix: "dbx-architect-lab-uat"
   # Subnet for the cluster VMs (netmask /29 to /9). Each node uses one IP; a /24 fits ~250 nodes.
   # Databricks on GCP needs a single regional subnet, no secondary ranges.
   node_subnet_cidr: "10.1.0.0/22"

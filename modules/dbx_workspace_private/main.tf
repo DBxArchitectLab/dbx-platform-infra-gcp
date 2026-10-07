@@ -9,6 +9,7 @@ module "network" {
   gcp_project_id               = var.gcp_project_id
   region                       = var.region
   vpc_name                     = var.vpc_name
+  databricks_name_prefix       = var.databricks_name_prefix
   node_subnet_cidr             = var.node_subnet_cidr
   psc_subnet_cidr              = var.psc_subnet_cidr
   nat_enabled                  = var.nat_enabled
