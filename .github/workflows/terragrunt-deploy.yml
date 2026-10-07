@@ -1,4 +1,6 @@
 name: Terragrunt Deploy Stacks
+# Title of each run in the Actions list, e.g. "apply dev-dbxarchitectlab-workspace (@DBxArchitectLab)".
+run-name: ${{ inputs.action }} ${{ inputs.stack }} (@${{ github.actor }})
 
 on:
   workflow_dispatch:
