@@ -342,6 +342,7 @@ Repeat 5.2 with the `uat-*` stacks, then the `prod-*` stacks.
 | PSC forwarding rule: service attachment not found / not in region | Wrong `*_service_attachment` for the region (step 1) |
 | Cluster fails to start: `Quota 'N2_CPUS' exceeded` / `CPUS` | Raise the region's CPU quotas (step 2.5) or use smaller node types / fewer workers |
 | Cluster fails to start: network / bootstrap timeout | The firewall rule `db-<subnet>-ingress` is missing, or there's no egress path (Cloud NAT off and PSC off/misconfigured). With PSC, check the private DNS records in the workspace output (`psc_dns_records`) |
+| Bucket IAM: `Service account db-uc-credential-...@uc-<region>.iam.gserviceaccount.com does not exist` | The service account Databricks created for the storage credential isn't visible to GCP IAM yet. The module waits 90 seconds before the bucket bindings; if it still happens, re-run `apply` (the credential already exists, so only the bindings are retried) |
 | External location validation fails (`403` on the bucket) | Bucket IAM propagation; re-run `apply`. If it persists, check that `uc_storage_service_account` has `storage.objectAdmin` and `storage.legacyBucketReader` on the bucket |
 | `default_labels keys and values must be lowercase...` | `labels` in `live/<env>/config.yaml` don't follow GCP label rules |
 | Metastore create fails: region already has a metastore | See step 3.5 |

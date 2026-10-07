@@ -21,17 +21,28 @@ locals {
   credential_service_account = databricks_storage_credential.this.databricks_gcp_service_account[0].email
 }
 
+# Databricks creates the credential's service account in its own project when the credential is created; GCP IAM
+# can take a minute or more to see a new service account, and bindings made before that fail with
+# "Service account ... does not exist". The trigger re-runs the wait if the credential (and its account) is replaced.
+resource "time_sleep" "service_account_propagation" {
+  create_duration = "90s"
+
+  triggers = {
+    service_account = local.credential_service_account
+  }
+}
+
 # Read/write access to the bucket: object read/write plus bucket metadata (needed to list and validate).
 resource "google_storage_bucket_iam_member" "object_admin" {
   bucket = var.bucket_name
   role   = "roles/storage.objectAdmin"
-  member = "serviceAccount:${local.credential_service_account}"
+  member = "serviceAccount:${time_sleep.service_account_propagation.triggers["service_account"]}"
 }
 
 resource "google_storage_bucket_iam_member" "bucket_reader" {
   bucket = var.bucket_name
   role   = "roles/storage.legacyBucketReader"
-  member = "serviceAccount:${local.credential_service_account}"
+  member = "serviceAccount:${time_sleep.service_account_propagation.triggers["service_account"]}"
 }
 
 # Bucket IAM changes take a few seconds to apply; creating the external location too early fails validation.
