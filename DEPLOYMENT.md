@@ -332,6 +332,7 @@ curl -s "${H[@]}" "$ACC/api/2.0/accounts/$DBX_ACCOUNT_ID/workspaces" | jq '.[] |
 | ✔ `cannot create mws networks: Malformed parameters: network_name ... is not of the form ^[a-zA-Z0-9-_]{3,30}$` | Databricks names on GCP are limited to 30 characters. Fixed in the module (short `databricks_name_prefix`); an over-long prefix now fails at plan time |
 | `databricks_mws_workspaces`: permission errors on the project, IAM, or service usage | Deployer lacks Owner (or Editor + Project IAM Admin), or APIs aren't enabled. Re-run the setup script |
 | Workspace creation fails with an `allowedPolicyMemberDomains` error | Organization policy restricts IAM members to your domain; allow the Databricks customer ID in the policy or exempt the project |
+| ✔ Destroy: `cannot delete mws networks: MALFORMED_REQUEST: Cannot delete a network while it is attached to a workspace` | Databricks deletes a GCP workspace in the background, and its network stays attached for several minutes. The stack now waits 10 minutes between the two on destroy. A workspace stack deployed before that wait was added has no wait in state: run `apply` on it once before `destroy`, or simply re-run `destroy` a few minutes after this error (the workspace is already gone from state, so it continues with the network) |
 | `PSC ... requires ENTERPRISE` / private access settings rejected | Account isn't on Enterprise; set `private_service_connect.enabled: false` |
 | PSC forwarding rule: service attachment not found | Wrong `*_service_attachment` for the region |
 
@@ -377,7 +378,7 @@ done
 
 ## Destroying
 
-Destroy in reverse order with the workflow's `destroy` action: `<env>-dbxarchitectlab-workspace-bootstrap`, then
+Destroy in reverse order with the workflow's `destroy` action (a workspace stack takes 10+ minutes: it waits for Databricks to finish deleting the workspace before deleting its network): `<env>-dbxarchitectlab-workspace-bootstrap`, then
 `<env>-dbxarchitectlab-workspace` (for each environment), then `metastore`. Deleting a workspace makes Databricks
 clean up the resources it created in the project; check afterwards for leftover `databricks-<workspace-id>*`
 buckets and `db-<workspace-id>` service accounts and remove them if they remain. The state bucket, deployer

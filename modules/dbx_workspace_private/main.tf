@@ -19,6 +19,15 @@ module "network" {
   relay_service_attachment     = var.relay_service_attachment
 }
 
+# Destroy only: Databricks deletes a GCP workspace asynchronously, and its network configuration (and PSC
+# endpoints, private access settings) can't be deleted until the workspace is fully gone ("Cannot delete a network
+# while it is attached to a workspace"). Destroy order is workspace → this wait → network.
+resource "time_sleep" "workspace_deletion" {
+  destroy_duration = "10m"
+
+  depends_on = [module.network]
+}
+
 module "workspace" {
   source = "./modules/workspace"
 
@@ -32,6 +41,8 @@ module "workspace" {
   region                     = var.region
   network_id                 = module.network.network_id
   private_access_settings_id = module.network.private_access_settings_id
+
+  depends_on = [time_sleep.workspace_deletion]
 }
 
 # Private DNS for back-end Private Service Connect; the record names depend on the workspace URL.
