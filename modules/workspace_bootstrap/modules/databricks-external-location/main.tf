@@ -11,7 +11,7 @@ resource "databricks_storage_credential" "this" {
 
   # Required when the credential is bound to external locations (Unity Catalog API otherwise rejects in-place updates).
   force_update = true
-  # Only usable from this environment's workspace (see databricks_workspace_binding below).
+  # Only usable from this environment's workspace, which is bound automatically.
   isolation_mode = "ISOLATION_MODE_ISOLATED"
 
   databricks_gcp_service_account {}
@@ -67,19 +67,24 @@ resource "databricks_external_location" "this" {
   depends_on = [time_sleep.iam_propagation]
 }
 
-# The metastore is shared by dev/uat/prod; bind the credential and location to this environment's workspace only.
-resource "databricks_workspace_binding" "storage_credential" {
-  securable_name = databricks_storage_credential.this.name
-  securable_type = "storage_credential"
-  workspace_id   = var.workspace_id
-  binding_type   = "BINDING_TYPE_READ_WRITE"
+# The metastore is shared by dev/uat/prod. ISOLATION_MODE_ISOLATED binds the credential and the location to the
+# workspace that creates them (this environment's) automatically. Explicit bindings to the same workspace used to
+# live here; they were redundant and broke destroy (removed first, they left the objects inaccessible). Forget them
+# without unbinding the workspace.
+removed {
+  from = databricks_workspace_binding.storage_credential
+
+  lifecycle {
+    destroy = false
+  }
 }
 
-resource "databricks_workspace_binding" "external_location" {
-  securable_name = databricks_external_location.this.name
-  securable_type = "external_location"
-  workspace_id   = var.workspace_id
-  binding_type   = "BINDING_TYPE_READ_WRITE"
+removed {
+  from = databricks_workspace_binding.external_location
+
+  lifecycle {
+    destroy = false
+  }
 }
 
 resource "databricks_grants" "external_location" {
