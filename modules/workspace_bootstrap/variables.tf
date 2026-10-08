@@ -23,6 +23,20 @@ variable "region" {
   type        = string
 }
 
+variable "metastore_id" {
+  description = "Expected Unity Catalog metastore ID, checked by the validation notebook; null or empty skips that check"
+  type        = string
+  nullable    = true
+  default     = null
+}
+
+variable "platform_admin_group_name" {
+  description = "Account group expected to be workspace admin, checked by the validation notebook; null skips that check"
+  type        = string
+  nullable    = true
+  default     = null
+}
+
 variable "bucket_name" {
   description = "Globally unique GCS bucket name for the Unity Catalog external location and catalog managed storage"
   type        = string

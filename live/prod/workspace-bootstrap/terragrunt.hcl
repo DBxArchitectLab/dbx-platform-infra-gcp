@@ -40,6 +40,10 @@ inputs = merge(
 
     region = local.config.region
 
+    # Expected values for the validation notebook (empty metastore ID skips that check).
+    metastore_id              = get_env("DATABRICKS_METASTORE_ID", "")
+    platform_admin_group_name = local.config.identity.platform_admin_group_name
+
     bucket_name          = "${local.gcs_config.bucket.name_prefix}-${local.env.inputs.gcp_project_id}"
     bucket_force_destroy = try(local.gcs_config.bucket.force_destroy, false)
 
