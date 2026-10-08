@@ -343,23 +343,29 @@ curl -s "${H[@]}" "$ACC/api/2.0/accounts/$DBX_ACCOUNT_ID/workspaces" | jq '.[] |
 | External location validation fails (`403` on the bucket) | Bucket IAM propagation; re-run `apply`. If it persists, check that `uc_storage_service_account` (stack output) has `storage.objectAdmin` and `storage.legacyBucketReader` on the bucket |
 | `default_labels keys and values must be lowercase...` | `labels` in `live/<env>/config.yaml` break GCP label rules |
 | Bucket name conflict / too long | GCS names are global and at most 63 characters; change `name_prefix` |
-| ✔ Destroy: `cannot delete grants: Catalog '...' is not accessible in current workspace` | An earlier version removed the catalog's workspace binding before its grants. Fixed: isolated objects now keep the automatic binding to their own workspace until they are deleted. To recover a stack that already hit this, re-bind the catalog (script below), then re-run `destroy` with the fixed code |
+| Re-bind script prints `HTTP 000` | `curl` couldn't connect: the workspace URL is wrong. The number after the workspace ID (`<id>.<n>.gcp.databricks.com`) differs per workspace; copy the URL from the account console instead of guessing |
+| ✔ Destroy: `cannot delete grants: Catalog '...' (or External Location '...') is not accessible in current workspace` | An earlier version created explicit workspace bindings, and `destroy` removed them before the grants, leaving the objects inaccessible. Fixed: new deployments rely on the automatic binding to the creating workspace. A stack deployed with the old version still has bindings in state, and `destroy` ignores the `removed` blocks that drop them, so: (1) re-bind the objects (script below), (2) run `apply` on the bootstrap stack once (drops the bindings from state without unbinding), (3) run `destroy` |
 
-To re-bind an isolated catalog to its workspace (for example after the destroy error above), run in Cloud Shell
-with the workspace URL and ID from the account console (**Workspaces**):
+To re-bind an environment's isolated objects to its workspace (for example after the destroy error above), run in
+Cloud Shell with the workspace URL and ID from the account console (**Workspaces**). Re-running it is harmless; an
+object that was already deleted reports not found:
 
 ```bash
-WS_URL="https://<workspace-id>.<n>.gcp.databricks.com"
+WS_URL="https://<workspace-id>.<n>.gcp.databricks.com"   # copy from the console: <n> differs per workspace; no trailing /
 WS_ID="<workspace-id>"
-CATALOG="dbxarchitectlab_prod"
+ENV="dev"
 SA_EMAIL="sa-dbx-platform-infra@project-14198bfd-ad7e-4e81-946.iam.gserviceaccount.com"
 
 ID_TOKEN=$(gcloud auth print-identity-token --impersonate-service-account="$SA_EMAIL" --audiences="$WS_URL" --include-email 2>/dev/null)
 ACCESS_TOKEN=$(gcloud auth print-access-token --impersonate-service-account="$SA_EMAIL" 2>/dev/null)
 H=(-H "Authorization: Bearer $ID_TOKEN" -H "X-Databricks-GCP-SA-Access-Token: $ACCESS_TOKEN")
+BODY="{\"add\": [{\"workspace_id\": $WS_ID, \"binding_type\": \"BINDING_TYPE_READ_WRITE\"}]}"
 
-curl -s "${H[@]}" -X PATCH "$WS_URL/api/2.1/unity-catalog/bindings/catalog/$CATALOG"   -d "{\"add\": [{\"workspace_id\": $WS_ID, \"binding_type\": \"BINDING_TYPE_READ_WRITE\"}]}" | jq .
-curl -s "${H[@]}" "$WS_URL/api/2.1/unity-catalog/catalogs/$CATALOG" | jq '{name, isolation_mode, owner}'
+for S in "catalog dbxarchitectlab_$ENV"          "external_location ext_loc_dbx_architect_lab_$ENV"          "storage_credential ext_loc_dbx_architect_lab_${ENV}_cred"; do
+  set -- $S
+  echo "== $1 $2"
+  curl -s "${H[@]}" -X PATCH "$WS_URL/api/2.1/unity-catalog/bindings/$1/$2" -d "$BODY" | jq -c .
+done
 ```
 
 ### Clusters
