@@ -70,7 +70,8 @@ resource "databricks_external_location" "this" {
 # The metastore is shared by dev/uat/prod. ISOLATION_MODE_ISOLATED binds the credential and the location to the
 # workspace that creates them (this environment's) automatically. Explicit bindings to the same workspace used to
 # live here; they were redundant and broke destroy (removed first, they left the objects inaccessible). Forget them
-# without unbinding the workspace.
+# without unbinding the workspace. Only `apply` honors these blocks; `destroy` still destroys a binding that is in
+# state, so a stack deployed with the old bindings must run `apply` once before `destroy`.
 removed {
   from = databricks_workspace_binding.storage_credential
 

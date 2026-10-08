@@ -16,6 +16,8 @@ resource "databricks_catalog" "default" {
 # An explicit binding to the same workspace used to live here. It was redundant with the automatic binding and
 # broke destroy: removing it first left the catalog inaccessible, so deleting its grants and the catalog failed
 # ("Catalog ... is not accessible in current workspace"). Forget it without unbinding the workspace.
+# Note: only `apply` honors this block; `destroy` still destroys a binding that is in state. A stack deployed with
+# the old binding must run `apply` once before `destroy` (DEPLOYMENT.md, Troubleshooting).
 removed {
   from = databricks_workspace_binding.catalog
 
