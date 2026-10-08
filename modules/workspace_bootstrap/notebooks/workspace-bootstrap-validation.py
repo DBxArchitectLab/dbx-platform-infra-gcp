@@ -247,14 +247,28 @@ if check(SECTION, f"External location {el_name} exists",
     check_grants(SECTION, "external_location", el_name,
                  el_cfg.get("grant_principals", []), el_cfg.get("grant_privileges", []))
 
-    # Server-side check that the credential's service account can use the bucket (bucket IAM).
-    def server_side_validation():
-        res = api_post("/api/2.1/unity-catalog/validate-storage-credentials",
-                       {"storage_credential_name": cred_name, "external_location_name": el_name, "read_only": False})
-        outcomes = {r.get("operation"): r.get("result") for r in res.get("results", [])}
-        failed = {op: r for op, r in outcomes.items() if r == "FAIL"}
-        return not failed, outcomes
-    check(SECTION, "Credential can access the location (server-side validation)", server_side_validation)
+    # Server-side check that the credential's service account can use the bucket (bucket IAM). Only results with an
+    # operation (READ, LIST, WRITE, DELETE, PATH_EXISTS, ...) are access checks; the response can also contain results
+    # without one (notes about the request itself), which are reported separately as WARN with their message.
+    try:
+        validation = api_post("/api/2.1/unity-catalog/validate-storage-credentials",
+                              {"storage_credential_name": cred_name, "external_location_name": el_name,
+                               "read_only": False}).get("results", [])
+    except Exception as e:  # noqa: BLE001
+        validation = None
+        record(SECTION, "Credential can access the location (server-side validation)", "FAIL",
+               f"{type(e).__name__}: {e}")
+
+    if validation is not None:
+        operations = [r for r in validation if r.get("operation")]
+        failed_ops = [r for r in operations if r.get("result") == "FAIL"]
+        check(SECTION, "Credential can access the location (server-side validation)",
+              lambda: (bool(operations) and not failed_ops,
+                       {r["operation"]: r.get("result") + (f" ({r['message']})" if r.get("message") else "")
+                        for r in operations}))
+        for note in (r for r in validation if not r.get("operation")):
+            record(SECTION, "Server-side validation note", "WARN" if note.get("result") == "FAIL" else "INFO",
+                   f"{note.get('result')}: {note.get('message') or note}")
 
 # COMMAND ----------
 
