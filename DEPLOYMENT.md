@@ -289,6 +289,9 @@ To run it in each environment's workspace:
 
 Write tests only create temporary objects and remove them in the same cell: a file under
 `gs://<uc-bucket>/_bootstrap_validation/` and a `bootstrap_validation_<id>` schema in the environment's catalog.
+Unity Catalog keeps the dropped test table restorable (UNDROP) for up to 7 days, during which it still counts as a
+dependent of the external location; the bootstrap stack deletes the catalog and external location with
+`force_destroy` (from `bucket.force_destroy`), so it doesn't block a destroy.
 
 Statuses: **PASS**; **FAIL** (fix needed; see the check's detail and **Troubleshooting**); **WARN** (no public
 internet from the driver, expected only if Cloud NAT is disabled); **SKIP** (check disabled by config or widget);
@@ -377,6 +380,7 @@ curl -s "${H[@]}" "$ACC/api/2.0/accounts/$DBX_ACCOUNT_ID/workspaces" | jq '.[] |
 | External location validation fails (`403` on the bucket) | Bucket IAM propagation; re-run `apply`. If it persists, check that `uc_storage_service_account` (stack output) has `storage.objectAdmin` and `storage.legacyBucketReader` on the bucket |
 | `default_labels keys and values must be lowercase...` | `labels` in `live/<env>/config.yaml` break GCP label rules |
 | Bucket name conflict / too long | GCS names are global and at most 63 characters; change `name_prefix` |
+| ✔ Destroy: `cannot delete external location: ... because the location has ... 1 dependent managed tables` | A dropped managed table (for example from the validation notebook's write test) stays restorable for up to 7 days and still counts as a dependent. Fixed: the catalog and external location now use `force_destroy`, following `bucket.force_destroy` in `gcs-storage-config.yaml`. `destroy` reads that setting from state, so a stack deployed before the fix must run `apply` once, then `destroy` |
 | Re-bind script prints `HTTP 000` | `curl` couldn't connect: the workspace URL is wrong. The number after the workspace ID (`<id>.<n>.gcp.databricks.com`) differs per workspace; copy the URL from the account console instead of guessing |
 | ✔ Destroy: `cannot delete grants: Catalog '...' (or External Location '...') is not accessible in current workspace` | An earlier version created explicit workspace bindings, and `destroy` removed them before the grants, leaving the objects inaccessible. Fixed: new deployments rely on the automatic binding to the creating workspace. A stack deployed with the old version still has bindings in state, and `destroy` ignores the `removed` blocks that drop them, so: (1) re-bind the objects (script below), (2) run `apply` on the bootstrap stack once (drops the bindings from state without unbinding), (3) run `destroy` |
 

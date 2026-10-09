@@ -2,4 +2,5 @@
 # The GCP project ID is appended to keep the name globally unique (max 63 characters in total).
 bucket:
   name_prefix: "dbx-architect-lab-prod-uc"
+  # Also lets destroy delete the catalog and external location while they still have contents or dependents.
   force_destroy: true

@@ -16,3 +16,7 @@ crash.*.log
 backend.tf
 providers.tf
 .terragrunt-cache/
+
+# Python bytecode (e.g. from syntax-checking notebooks)
+__pycache__/
+*.pyc
