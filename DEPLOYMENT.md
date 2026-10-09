@@ -247,7 +247,7 @@ For each environment, in this order:
 | Order | Stack | Creates | Duration |
 | --- | --- | --- | --- |
 | 1 | `<env>-dbxarchitectlab-workspace` | VPC, node subnet, firewall rule `db-<subnet>-ingress`, Cloud Router + NAT (plus PSC subnet, endpoints and private DNS zone if enabled), Databricks network configuration, workspace, metastore assignment, admin group assignment | ~5–10 min |
-| 2 | `<env>-dbxarchitectlab-workspace-bootstrap` | Unity Catalog GCS bucket, storage credential with bucket IAM, external location, catalog (all isolated to this environment's workspace), grants, cluster policies, secret scope | ~3–5 min |
+| 2 | `<env>-dbxarchitectlab-workspace-bootstrap` | Unity Catalog GCS bucket, storage credential with bucket IAM, external location, catalog (all isolated to this environment's workspace), grants, cluster policies, secret scope, validation notebook | ~3–5 min |
 
 While the workspace is created, Databricks itself creates the workspace's GCS buckets (`databricks-<workspace-id>*`)
 and a compute service account (`db-<workspace-id>@...`) in the project; they are not in Terraform state.
@@ -262,6 +262,39 @@ The bootstrap includes two deliberate waits:
 The bootstrap reads the workspace URL from the workspace stack's state, so it must run after it.
 
 ## 8. Verify
+
+### 8.1 Validation notebook
+
+The bootstrap stack deploys the same validation notebook to every workspace:
+`/Shared/platform/workspace-bootstrap-validation` (source:
+`modules/workspace_bootstrap/notebooks/workspace-bootstrap-validation.py`). Next to it,
+`/Shared/platform/workspace-bootstrap-validation.json` holds that environment's expected values (catalog, storage
+root, external location, storage credential and its service account, grants, cluster policies, secret scope, metastore
+ID, admin group), written from the same inputs that provisioned them.
+
+To run it in each environment's workspace:
+
+1. Sign in as a member of `DBX_Architect_Lab_Admin`.
+2. Open **Workspace → Shared → platform → workspace-bootstrap-validation**.
+3. Attach a Unity Catalog-enabled compute: serverless, or a cluster in standard/shared or dedicated/single-user
+   access mode. A classic cluster also tests the workspace network (Cloud NAT, Private Google Access); serverless tests
+   Databricks' serverless network instead.
+4. **Run all**. Each cell has a title naming what it validates. The last cell, **Validation summary**, shows every
+   check and fails the notebook if any check failed, so it can also run as a job.
+
+| Widget | Default | Purpose |
+| --- | --- | --- |
+| `config_path` | `/Workspace/Shared/platform/workspace-bootstrap-validation.json` | Expected values for this environment |
+| `run_write_tests` | `true` | `false` for a read-only run: skips writing a file to the bucket and creating a temporary schema and table |
+
+Write tests only create temporary objects and remove them in the same cell: a file under
+`gs://<uc-bucket>/_bootstrap_validation/` and a `bootstrap_validation_<id>` schema in the environment's catalog.
+
+Statuses: **PASS**; **FAIL** (fix needed; see the check's detail and **Troubleshooting**); **WARN** (no public
+internet from the driver, expected only if Cloud NAT is disabled); **SKIP** (check disabled by config or widget);
+**INFO** (context, such as the running user and runtime).
+
+### 8.2 Manual checks
 
 For each environment:
 
