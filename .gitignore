@@ -20,3 +20,6 @@ providers.tf
 # Python bytecode (e.g. from syntax-checking notebooks)
 __pycache__/
 *.pyc
+
+# Local recordings, slides and PDFs: never pushed
+/recording/
