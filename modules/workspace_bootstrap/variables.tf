@@ -43,7 +43,7 @@ variable "bucket_name" {
 }
 
 variable "bucket_force_destroy" {
-  description = "Allow Terraform to delete the bucket even if it still contains objects"
+  description = "Allow Terraform to delete the Unity Catalog data on destroy: the bucket even if it still contains objects, and the catalog and external location even if they still have contents or dependents"
   type        = bool
   default     = false
 }

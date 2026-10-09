@@ -5,7 +5,7 @@
 # Project IDs are globally unique, so the ID is appended to bucket names to keep them unique too.
 gcp_project_id: "project-14198bfd-ad7e-4e81-946"
 
-# Terraform state bucket: "<state.bucket_prefix>-<gcp_project_id>" (create it once, see DEPLOYMENT.md step 2.2).
+# Terraform state bucket: "<state.bucket_prefix>-<gcp_project_id>" (created by scripts/setup-gcp-prerequisites.sh, see DEPLOYMENT.md section 2).
 state:
   bucket_prefix: "dbx-architect-lab-tfstate"
   location: "us-central1"

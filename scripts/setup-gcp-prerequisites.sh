@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-time GCP prerequisites for dbx-platform-infra-gcp (DEPLOYMENT.md step 2).
+# One-time GCP prerequisites for dbx-platform-infra-gcp (DEPLOYMENT.md section 2).
 #
 # Creates or updates: required APIs, the Terraform state bucket, the deployer service account and its roles,
 # and Workload Identity Federation for GitHub Actions. Safe to re-run: existing resources are kept and IAM
@@ -127,5 +127,5 @@ step "6/6 Done. GitHub environment secrets (dev, uat, prod):"
 echo "  GCP_WORKLOAD_IDENTITY_PROVIDER = projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${WIF_POOL}/providers/${WIF_PROVIDER}"
 echo "  GCP_DEPLOYER_SERVICE_ACCOUNT   = $SA_EMAIL"
 echo
-echo "Next: add $SA_EMAIL to the Databricks account as an account admin (DEPLOYMENT.md step 3),"
+echo "Next: add $SA_EMAIL to the Databricks account as an account admin (DEPLOYMENT.md section 3),"
 echo "then run scripts/preflight-check.sh."

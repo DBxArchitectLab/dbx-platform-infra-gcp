@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Read-only pre-flight check for dbx-platform-infra-gcp (DEPLOYMENT.md step 5). Changes nothing.
+# Read-only pre-flight check for dbx-platform-infra-gcp (DEPLOYMENT.md section 6). Changes nothing.
 #
 # Verifies every prerequisite the stacks depend on and prints the fix for each failure: the GCP project, APIs,
 # state bucket, deployer service account roles, impersonation, Workload Identity Federation, the Databricks
@@ -44,7 +44,7 @@ fi
 ENABLED=$(gcloud services list --enabled --project="$PROJECT_ID" --format='value(config.name)' 2>/dev/null)
 for API in compute storage iam iamcredentials sts cloudresourcemanager serviceusage; do
   if grep -qx "$API.googleapis.com" <<<"$ENABLED"; then pass "API $API"; else
-    fail "API $API.googleapis.com not enabled" "re-run scripts/setup-gcp-prerequisites.sh (step 2)"; fi
+    fail "API $API.googleapis.com not enabled" "re-run scripts/setup-gcp-prerequisites.sh (DEPLOYMENT.md section 2)"; fi
 done
 
 section "Terraform state bucket"
@@ -55,18 +55,18 @@ if gcloud storage buckets describe "gs://$STATE_BUCKET" >/dev/null 2>&1; then
     pass "deployer has roles/storage.objectAdmin on the bucket"
   else
     fail "deployer has no object access on the state bucket (terragrunt init: storage.objects.list denied)" \
-      "re-run scripts/setup-gcp-prerequisites.sh (step 2)"
+      "re-run scripts/setup-gcp-prerequisites.sh (DEPLOYMENT.md section 2)"
   fi
 else
   fail "gs://$STATE_BUCKET missing (terragrunt init: storage.objects.list denied ... or it may not exist)" \
-    "re-run scripts/setup-gcp-prerequisites.sh (step 2)"
+    "re-run scripts/setup-gcp-prerequisites.sh (DEPLOYMENT.md section 2)"
 fi
 
 section "Deployer service account $SA_EMAIL"
 if gcloud iam service-accounts describe "$SA_EMAIL" >/dev/null 2>&1; then
   pass "exists"
 else
-  fail "service account missing" "run scripts/setup-gcp-prerequisites.sh (step 2)"
+  fail "service account missing" "run scripts/setup-gcp-prerequisites.sh (DEPLOYMENT.md section 2)"
 fi
 
 ROLES=$(gcloud projects get-iam-policy "$PROJECT_ID" --flatten=bindings \
@@ -75,7 +75,7 @@ if grep -qx "roles/owner" <<<"$ROLES" || { grep -qx "roles/editor" <<<"$ROLES" &
   pass "project roles: $(echo $ROLES)"
 else
   fail "no roles/owner (or editor + projectIamAdmin) on the project (workspace stack: compute.networks.create denied)" \
-    "re-run scripts/setup-gcp-prerequisites.sh (step 2); found: ${ROLES:-none}"
+    "re-run scripts/setup-gcp-prerequisites.sh (DEPLOYMENT.md section 2); found: ${ROLES:-none}"
 fi
 
 SA_POLICY=$(gcloud iam service-accounts get-iam-policy "$SA_EMAIL" --format=json 2>/dev/null)
@@ -83,7 +83,7 @@ if jq -e --arg m "serviceAccount:$SA_EMAIL" '.bindings[]? | select(.role=="roles
   pass "can impersonate itself (Token Creator)"
 else
   fail "missing Token Creator on itself (CI: Show runtime identity / getOpenIdToken denied)" \
-    "re-run scripts/setup-gcp-prerequisites.sh (step 2)"
+    "re-run scripts/setup-gcp-prerequisites.sh (DEPLOYMENT.md section 2)"
 fi
 
 section "Workload Identity Federation"
@@ -93,13 +93,13 @@ if [ -n "$CONDITION" ]; then
   pass "provider $WIF_POOL/$WIF_PROVIDER"
   info "condition: $CONDITION"
 else
-  fail "provider $WIF_POOL/$WIF_PROVIDER missing" "re-run scripts/setup-gcp-prerequisites.sh (step 2)"
+  fail "provider $WIF_POOL/$WIF_PROVIDER missing" "re-run scripts/setup-gcp-prerequisites.sh (DEPLOYMENT.md section 2)"
 fi
 if jq -e --arg r "/attribute.repository_id/$GH_REPO_ID" '.bindings[]? | select(.role=="roles/iam.workloadIdentityUser") | .members[] | select(endswith($r))' <<<"$SA_POLICY" >/dev/null; then
   pass "repo $GH_REPO_ID can impersonate the deployer"
 else
   fail "no workloadIdentityUser binding for repo $GH_REPO_ID (CI auth: iam.serviceAccounts.getAccessToken denied)" \
-    "re-run scripts/setup-gcp-prerequisites.sh (step 2)"
+    "re-run scripts/setup-gcp-prerequisites.sh (DEPLOYMENT.md section 2)"
 fi
 info "GCP_WORKLOAD_IDENTITY_PROVIDER = projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/$WIF_POOL/providers/$WIF_PROVIDER"
 info "GCP_DEPLOYER_SERVICE_ACCOUNT   = $SA_EMAIL"
@@ -136,7 +136,7 @@ case "$CODE" in
     ;;
   403)
     fail "403 Invalid Request: $SA_EMAIL is not a user or not an account admin in this account" \
-      "account console → User management → Users → Add user ($SA_EMAIL) → Roles → Account admin (step 3)"
+      "account console → User management → Users → Add user ($SA_EMAIL) → Roles → Account admin (DEPLOYMENT.md section 3)"
     ;;
   *)
     fail "unexpected response: $(jq -c . <<<"$METASTORES" 2>/dev/null || echo "$METASTORES")" "see Troubleshooting in DEPLOYMENT.md"
@@ -150,13 +150,13 @@ if [ -z "$CODE" ]; then
     "$ACC/api/2.0/accounts/$DBX_ACCOUNT_ID/scim/v2/Groups" | jq '.Resources[0] // empty')
   if [ -z "$GROUP" ]; then
     fail "group $ADMIN_GROUP missing (workspace stack: group not found)" \
-      "account console → User management → Groups → create $ADMIN_GROUP (step 3)"
+      "account console → User management → Groups → create $ADMIN_GROUP (DEPLOYMENT.md section 3)"
   elif [ -n "$SA_ID" ] && jq -e --arg id "$SA_ID" '.members[]? | select(.value==$id)' <<<"$GROUP" >/dev/null; then
     pass "$SA_EMAIL is in $ADMIN_GROUP"
     info "members: $(jq -r '[.members[]?.display] | join(", ")' <<<"$GROUP")"
   else
     fail "$SA_EMAIL is not in $ADMIN_GROUP (bootstrap: no workspace or metastore admin rights)" \
-      "account console → User management → Groups → $ADMIN_GROUP → Add members (step 3)"
+      "account console → User management → Groups → $ADMIN_GROUP → Add members (DEPLOYMENT.md section 3)"
   fi
 fi
 

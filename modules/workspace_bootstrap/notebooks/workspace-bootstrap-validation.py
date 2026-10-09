@@ -26,7 +26,9 @@
 # MAGIC **Run it** as a member of `DBX_Architect_Lab_Admin` on a Unity Catalog-enabled cluster (standard/shared or
 # MAGIC dedicated/single-user access mode) or serverless compute. Set `run_write_tests` to `false` for a read-only run.
 # MAGIC Write tests create and remove only temporary objects (`_bootstrap_validation/` files and a
-# MAGIC `bootstrap_validation_<id>` schema).
+# MAGIC `bootstrap_validation_<id>` schema). Unity Catalog keeps the dropped test table restorable (UNDROP) for up to
+# MAGIC 7 days; the bootstrap stack deletes the catalog and external location with `force_destroy`, so this doesn't
+# MAGIC block a destroy.
 
 # COMMAND ----------
 

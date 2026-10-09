@@ -8,6 +8,9 @@ resource "databricks_catalog" "default" {
   comment      = "Default Unity Catalog bootstrap catalog."
   storage_root = local.catalog_storage_root
 
+  # Delete even if the catalog still contains schemas or tables.
+  force_destroy = var.force_destroy
+
   # The metastore is shared by dev/uat/prod; without isolation the catalog shows up in every workspace.
   # ISOLATED binds the catalog to the workspace that creates it (this environment's) automatically.
   isolation_mode = "ISOLATED"

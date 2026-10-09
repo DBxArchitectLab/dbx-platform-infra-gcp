@@ -25,6 +25,12 @@ variable "storage_credential_name" {
   type        = string
 }
 
+variable "force_destroy" {
+  description = "Allow Terraform to delete the external location even if Unity Catalog still lists dependents (e.g. dropped managed tables kept for UNDROP)"
+  type        = bool
+  default     = false
+}
+
 variable "enable_external_location_grants" {
   description = "If true, apply databricks_grants on the external location for external_location_grant_principals."
   type        = bool
